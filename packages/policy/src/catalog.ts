@@ -148,7 +148,7 @@ function validateEvaluation(source: PolicySource, profiles: Map<string, LocatedP
     reportDefinitionIssues(source.path, parsed.error.issues, report);
     return;
   }
-  const { profiles: references, principleIds, skill } = parsed.data;
+  const { id, profiles: references, principleIds, skill } = parsed.data;
   const owner = /(?:^|\/)skills\/([^/]+)\/evals\/.+\.json$/.exec(source.path.replaceAll("\\", "/"))?.[1];
   validatePrincipleIds(principleIds, principles, source.path, "principleIds", report);
   for (const [index, ref] of references.entries()) {
@@ -161,7 +161,7 @@ function validateEvaluation(source: PolicySource, profiles: Map<string, LocatedP
   if (owner && skill && skill.id !== owner) {
     report("missing_reference", source.path, "skill.id", `The evaluation belongs to skill ${owner}, not ${skill.id}.`);
   }
-  return { owner, skill: skill?.id };
+  return { id, owner, skill: skill?.id };
 }
 
 export function validateSkillsAndEvaluations(catalog: PolicyCatalog, profiles: Map<string, LocatedProfile>, principles: Set<string>, report: Report) {
@@ -179,7 +179,8 @@ export function validateSkillsAndEvaluations(catalog: PolicyCatalog, profiles: M
   }
 
   const linked = new Set<string>();
-  for (const source of catalog.evaluations ?? []) {
+  const cases = new Map<string, string>();
+  for (const source of [...catalog.evaluations ?? []].sort((a, b) => compareText(a.path, b.path))) {
     let valid = true;
     const result = validateEvaluation(source, profiles, principles, (...diagnostic) => {
       valid = false;
@@ -189,8 +190,17 @@ export function validateSkillsAndEvaluations(catalog: PolicyCatalog, profiles: M
     const skill = result.owner ?? result.skill;
     if (skill && !skills.has(skill)) {
       report("missing_reference", source.path, "skill.id", `Unknown skill ${skill}.`);
+      continue;
     }
-    if (valid && result.owner) linked.add(result.owner);
+    if (!valid) continue;
+    if (result.owner) linked.add(result.owner);
+
+    const previous = cases.get(result.id);
+    if (previous === undefined) {
+      cases.set(result.id, source.path);
+    } else {
+      report("duplicate_id", source.path, "id", `Evaluation ${result.id} is already defined at ${previous}.`);
+    }
   }
   for (const [id, { path, valid }] of skills) {
     if (valid && !linked.has(id)) report("missing_evaluation", path, "evals", `Skill ${id} requires a valid colocated evaluation.`);

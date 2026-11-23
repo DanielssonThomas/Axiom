@@ -140,6 +140,22 @@ describe("structural validation", () => {
     expect(resolvePolicy({ ...catalog, skills: [skill], evaluations: [json(casePath, evaluation)] }, []).diagnostics).toEqual([]);
   });
 
+  test("rejects duplicate case identifiers at a stable path regardless of input order", () => {
+    const sharedPath = "evals/cases/context-discovery.json";
+    const evaluations = [json(casePath, evaluation), json(sharedPath, { ...evaluation, skill: undefined })];
+    const resolve = (sources: typeof evaluations) => resolvePolicy({ ...catalog, skills: [skill], evaluations: sources }, []);
+    const resolution = resolve(evaluations);
+
+    expect(resolution.diagnostics).toEqual([{
+      code: "duplicate_id",
+      path: casePath,
+      field: "id",
+      message: `Evaluation ${evaluation.id} is already defined at ${sharedPath}.`,
+    }]);
+    expect(resolution.policy).toBeUndefined();
+    expect(resolve([...evaluations].reverse())).toEqual(resolution);
+  });
+
   test("reports invalid document fields, unknown IDs, and missing valid evaluation links", () => {
     const unknownProfilePath = "profiles/malformed/profile.json";
     const invalidJsonPath = "profiles/invalid/profile.json";
