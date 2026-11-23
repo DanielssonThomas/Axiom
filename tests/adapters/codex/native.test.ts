@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,8 +11,72 @@ import {
 } from "../../../adapters/codex/src/index.js";
 import { runCodex } from "../../../adapters/codex/src/process.js";
 import { EvidenceStore, snapshotSource } from "../../../packages/evidence/src/index.js";
+import { openLoopback } from "../../integration/hosts/loopback.js";
 
 const executable = process.env.AXIOM_TEST_CODEX_BINARY;
+
+test.runIf(Boolean(executable) && process.platform === "linux")(
+  "runs a paired native ChatGPT file profile against localhost with credential paths outside the tool sandbox", async () => {
+    const root = await mkdtemp(join(tmpdir(), "axiom-codex-native-auth-"));
+    const loopback = await openLoopback("codex", "gpt-5.4");
+    try {
+      const workspace = join(root, "workspace");
+      const authHome = join(root, "auth-profile");
+      const archive = join(root, "archive");
+      await Promise.all([mkdir(workspace), mkdir(authHome), mkdir(archive)]);
+      const auth = join(authHome, "auth.json");
+      const canary = "unrelated-profile-instruction";
+      await writeFile(join(authHome, "AGENTS.md"), canary);
+      const binary = await realpath(executable!);
+      const shim = join(root, "native.fixture.cjs");
+      // Only the fixture launcher redirects the pinned native CLI to localhost.
+      const route = `model_providers.fixture={name="Fixture",base_url=${JSON.stringify(loopback.endpoint)},wire_api="responses",requires_openai_auth=true,request_max_retries=0,stream_max_retries=0}`;
+      const helper = `permissions.axiom-benchmark.filesystem={":minimal"="read",":workspace_roots"="write",${JSON.stringify(binary)}="read"}`;
+      await writeFile(shim, [
+        "#!/usr/bin/env node",
+        `const binary = ${JSON.stringify(binary)}, args = process.argv.slice(2);`,
+        'const overrides = [];',
+        `if (args.includes("sandbox") || args.includes("exec")) overrides.push("-c", ${JSON.stringify(helper)});`,
+        `overrides.push("-c", 'model_provider="fixture"', "-c", ${JSON.stringify(route)});`,
+        'const result = require("node:child_process").spawnSync(binary, [...overrides, ...args], { stdio: "inherit" });',
+        'process.exit(result.status ?? 1);',
+      ].join("\n"), { mode: 0o700 });
+      const source = process.cwd();
+      const core = { path: "core/AXIOMS.md", version: "1", text: await readFile(join(source, "core/AXIOMS.md"), "utf8") };
+      const bundle = await buildCodexBundle({ source, destination: join(root, "bundle"), version: "0.1.0",
+        catalog: { core, profiles: [], checks: {} }, profiles: [] });
+      const host = { agent: "codex", version: supportedVersion, os: "linux", surface: "cli", model: "gpt-5.4" };
+      const backend = createCodexBackend({ program: shim, artifacts: archive, bundle, authHome });
+      const run = (mode: "with_axiom" | "without_axiom") => backend.run({
+        id: mode, caseId: "fixture", prompt: "Acknowledge the file-profile fixture.", workspace, host,
+        policy: bundle.policy, mode, timeoutMs: 24_000,
+      }, new AbortController().signal);
+
+      await writeFile(auth, JSON.stringify({ OPENAI_API_KEY: "not-a-real-api-key" }), { mode: 0o600 });
+      expect(await run("without_axiom")).toMatchObject({ outcome: { status: "blocked", reason: expect.stringMatching(/ChatGPT/) } });
+      expect(loopback.requests).toHaveLength(0);
+
+      const jwt = [Buffer.from('{"typ":"JWT","alg":"none"}').toString("base64url"), Buffer.from(JSON.stringify({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account", chatgpt_plan_type: "plus" },
+      })).toString("base64url"), "fixture-signature"].join(".");
+      const dummy = JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null, last_refresh: new Date().toISOString(),
+        tokens: { id_token: jwt, access_token: jwt, refresh_token: "fixture-only", account_id: "fixture-account" } });
+      await writeFile(auth, dummy);
+      const baseline = await run("without_axiom");
+      expect(baseline, JSON.stringify({ outcome: baseline.outcome, requests: loopback.requests.length }))
+        .toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
+      const installed = await run("with_axiom");
+      expect(installed, JSON.stringify(installed.outcome)).toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
+      expect(loopback.requests.map(({ text }) => text.includes(bundle.policy.digest))).toEqual([false, true]);
+      expect(loopback.requests.every(({ text }) => !text.includes(canary) && !text.includes(jwt))).toBe(true);
+      expect(await readFile(auth, "utf8")).toBe(dummy);
+    } finally {
+      await loopback.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 55_000,
+);
 
 test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle and credential-free execution", async () => {
   const source = process.cwd();
