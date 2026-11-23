@@ -69,4 +69,4 @@ AXIOM_HERMES_CLI=/absolute/path/to/hermes \
 pnpm test -- tests/integration/hosts
 ```
 
-An unconfigured host reports blocked installation. The suite uses synthetic localhost providers and leaves external model behavior unrun. The paired Claude fixture also runs the independent reuse grader against an unchanged result. Both fixture attempts must fail that requirement even when the native CLI completes.
+An unconfigured host reports blocked installation. The suite uses synthetic localhost providers and leaves external model behavior unrun. The isolated Claude benchmark probe runs two pairs through the independently metered provider broker. The independent graders fail the unchanged reuse artifact and the missing preview disposition in both arms, even when all four native processes complete. The preview check records the unavailable capability using the sandbox configuration and the tool surface observed at the broker. The offline replay reproduces the assertion outcomes.

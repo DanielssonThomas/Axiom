@@ -78,6 +78,7 @@ test.runIf(sandbox && program)("runs paired pinned Claude trials through the iso
       .rejects.toThrow(/cannot independently evaluate/);
     const result = await runTrustedClaude({
       ...options,
+      caseIds: ["reuse-summary-formatter", "report-unavailable-preview"],
     }, baseline, revision, revision, (body, signal) => fetch(server.endpoint + "/v1/messages", {
       method: "POST", body: JSON.stringify(body), signal,
     }));
@@ -85,13 +86,24 @@ test.runIf(sandbox && program)("runs paired pinned Claude trials through the iso
       native: execution?.outcome, grade: outcome.status,
     })), JSON.stringify(result)).toEqual([
       { native: { status: "passed" }, grade: "failed" }, { native: { status: "passed" }, grade: "failed" },
+      { native: { status: "passed" }, grade: "failed" }, { native: { status: "passed" }, grade: "failed" },
     ]);
-    expect(result.metering).toEqual({ metering: "reported", inputTokens: 18, outputTokens: 6 });
-    expect(server.requests).toHaveLength(2);
-    expect(server.requests.filter(({ text }) => text.includes("# Axiom Core"))).toHaveLength(1);
-    expect(Object.keys(result.observations)).toHaveLength(2);
+    for (const attempt of result.report.attempts.slice(2)) {
+      expect(attempt.assertions[0]?.outcome).toMatchObject({
+        status: "failed", reason: expect.stringMatching(/verification record.*missing/i),
+      });
+    }
+    expect(result.metering).toEqual({ metering: "reported", inputTokens: 36, outputTokens: 12 });
+    expect(server.requests).toHaveLength(4);
+    expect(server.requests.filter(({ text }) => text.includes("# Axiom Core"))).toHaveLength(2);
+    expect(Object.keys(result.observations)).toHaveLength(4);
     const review = await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest);
     expect(review).toMatchObject({ outcome: { status: "passed" }, report: { benchmarkOutcome: { status: "failed" } } });
+    const receipt = join(result.evidenceDirectory, "acceptance", `${result.report.attempts[2]!.id}.preview-capability.json`);
+    const savedReceipt = await readFile(receipt);
+    await rm(receipt);
+    expect((await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest)).outcome.status).toBe("blocked");
+    await writeFile(receipt, savedReceipt);
     const location = Object.values(result.observations)[0]!.location;
     await writeFile(join(result.evidenceDirectory, location), "{}");
     expect((await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest)).outcome.status).toBe("blocked");

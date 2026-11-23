@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { benchmarkReadiness, defaultBenchmarkLimits, runTrustedClaude } from "../../../packages/cli/dist/native-benchmark.js";
+import { benchmarkReadiness, defaultBenchmarkLimits, defaultCase, runTrustedClaude } from "../../../packages/cli/dist/native-benchmark.js";
+import { unavailablePreviewCase } from "../../../evals/graders/dist/index.js";
 import { anthropicMessages } from "../../../packages/cli/dist/provider-budget.js";
 
 export default {
@@ -15,7 +16,7 @@ export default {
       repository: process.cwd(),
       model: trial.model,
       allowPaid: true,
-      verifyCheckout: true,
+      caseIds: [defaultCase, unavailablePreviewCase.id],
       tokenBudget: trial.tokenLimit,
       timeoutSeconds: Number(process.env.AXIOM_TIMEOUT_MINUTES) * 60,
       ...(process.env.AXIOM_CLAUDE_PROGRAM ? { program: process.env.AXIOM_CLAUDE_PROGRAM } : {}),

@@ -7,11 +7,11 @@ import { promisify } from "node:util";
 import { buildClaudeBundle, createClaudeBackend, supportedVersion } from "@axiom/claude-adapter";
 import { runBenchmark } from "@axiom/benchmark";
 import { loadBundleWorkspace } from "@axiom/bundles";
-import { evaluationCaseSchema, type EvidenceOutcome, type Usage } from "@axiom/contracts";
+import { evaluationCaseSchema, type Evidence, type EvidenceOutcome, type Usage } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
-import { gradeCase, type GradingAction } from "@axiom/graders";
+import { gradeCase, unavailablePreviewCase, type GradingAction } from "@axiom/graders";
 import { assertPrivateBenchmarkPath, launchClaudeSandbox } from "./claude-sandbox.js";
-import { anthropicMessages, benchmarkModel, inputReservation, openProviderBudget, type MessagesTransport } from "./provider-budget.js";
+import { anthropicMessages, benchmarkModel, benchmarkTools, inputReservation, openProviderBudget, type MessagesTransport } from "./provider-budget.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 const exec = promisify(execFile);
@@ -22,6 +22,10 @@ const host = { agent: "claude", version: supportedVersion, model: benchmarkModel
 const observableGraders = new Set(["artifact.existing-formatter", "artifact.command-boundary", "artifact.canonical-model",
   "artifact.preserve-acceptance", "trace.context-discovery"]);
 class UnsupportedBenchmarkCase extends Error {}
+
+function isUnavailablePreview(evaluation: { id: string; version: string }) {
+  return evaluation.id === unavailablePreviewCase.id && evaluation.version === unavailablePreviewCase.version;
+}
 
 function measuredAttempt(before: Usage, after: Usage): Usage {
   if (before.metering === "reported" && after.metering === "reported"
@@ -44,7 +48,6 @@ export interface NativeBenchmarkOptions {
   maxOutputTokens: number;
   timeoutSeconds: number;
   repetitions: number;
-  verifyCheckout?: boolean;
 }
 
 export function isSupportedBenchmarkBudget(value: NativeBenchmarkOptions): boolean {
@@ -137,7 +140,7 @@ export async function runTrustedClaude(
   if (!options.allowPaid || (options.model ?? benchmarkModel) !== benchmarkModel || process.platform !== "linux" ||
       !isSupportedBenchmarkBudget(options)) throw new Error("The isolated benchmark scope requires explicit authorized limits.");
   const repository = await realpath(options.repository);
-  if (options.verifyCheckout && await requireCleanBenchmarkRevision(repository) !== revision) throw new Error("The trusted revision changed.");
+  if (await requireCleanBenchmarkRevision(repository) !== revision) throw new Error("The trusted revision changed.");
   assertPrivateBenchmarkPath(repository);
   assertPrivateBenchmarkPath(await realpath(baseline.directory));
   const verifiedGrader = await reviewedGrader(repository, baseline.directory);
@@ -147,7 +150,8 @@ export async function runTrustedClaude(
     const item = catalog.find((entry) => entry.id === id);
     if (!item) throw new UnsupportedBenchmarkCase("The requested benchmark case is absent from the reviewed baseline.");
     if (!item.assertions.some(({ required }) => required) ||
-        item.assertions.some(({ required, grader }) => required && !observableGraders.has(grader)) ||
+        item.assertions.some(({ required, grader }) => required && !observableGraders.has(grader) &&
+          !(isUnavailablePreview(item) && grader === unavailablePreviewCase.grader)) ||
         item.requiredCapabilities.some((id) => id !== "action-trace")) {
       throw new UnsupportedBenchmarkCase(`The native runner cannot independently evaluate every required assertion for ${item.id}.`);
     }
@@ -175,13 +179,14 @@ export async function runTrustedClaude(
       options.maxOutputTokens, upstream, cancellation);
     const backend = createClaudeBackend({
       program, artifacts: evidenceDirectory, bundle, installNative: true,
-      tools: ["Read", "Glob", "Grep", "Edit", "Write", "Skill"],
+      tools: [...benchmarkTools],
       environment: { ANTHROPIC_API_KEY: "axiom-loopback" },
       launch: launchClaudeSandbox(provider.socketPath, bundle.directory),
       // Broker limits are authoritative. Claude's internal budget is a secondary estimated stop.
       maxBudgetUsd: 5,
     });
     const workspaces = new Map<string, string>();
+    const observedLocalToolSurface = new Set<string>();
     const observations: Record<string, { location: string; digest: string }> = {};
     try {
       const report = await runBenchmark({
@@ -193,7 +198,12 @@ export async function runTrustedClaude(
           backend: { async run(request, abort) {
             workspaces.set(request.id, workspace);
             const before = provider.usage();
+            const initialSurface = provider.toolSurface();
             const result = await backend.run(request, abort);
+            const finalSurface = provider.toolSurface();
+            if (finalSurface.submitted > initialSurface.submitted && finalSurface.unfamiliarTools === initialSurface.unfamiliarTools) {
+              observedLocalToolSurface.add(request.id);
+            }
             return { ...result, usage: measuredAttempt(before, provider.usage()) };
           } },
         }),
@@ -202,6 +212,19 @@ export async function runTrustedClaude(
           async grade(evaluation, value) {
             const trace = value.execution.artifacts.find(({ kind }) => kind === "action-trace");
             const actions = await observedActions(store, trace?.location, workspaces.get(value.execution.requestId)!);
+            const id = value.execution.requestId;
+            if (actions && isUnavailablePreview(evaluation) && observedLocalToolSurface.has(id)) {
+              // The sandbox provides loopback only to the broker and starts no browser preview.
+              // The broker independently observed the launch's file/skill-only provider surface.
+              const evidence: Evidence = {
+                id: `${id}.preview-capability`, taskId: id, criterionIds: [unavailablePreviewCase.criterion],
+                source: value.source, policy: value.policy, host: value.execution.host, provenance: "observed",
+                startedAt: new Date().toISOString(), durationMs: 0, artifacts: [],
+                outcome: blocked("The fixture has no running browser preview."),
+              };
+              await store.record("acceptance", evidence);
+              actions.push({ kind: "check", evidence });
+            }
             const grading = { before: value.before, after: value.after, source: value.source, policy: value.policy,
               ...(actions === undefined ? {} : { actions }) };
             const assertions = gradeCase(evaluation, grading);
@@ -214,8 +237,7 @@ export async function runTrustedClaude(
         },
       });
       const metering = provider.usage();
-      const sourceFresh = !options.verifyCheckout ||
-        await requireCleanBenchmarkRevision(repository).then((current) => current === revision, () => false);
+      const sourceFresh = await requireCleanBenchmarkRevision(repository).then((current) => current === revision, () => false);
       const outcome = !sourceFresh ? blocked("The trusted source changed during execution.")
         : report.outcome.status === "failed" ? report.outcome
         : provider.refused || metering.metering !== "reported" || cancellation.aborted
@@ -249,7 +271,7 @@ export async function runNativeBenchmark(agent: string, options: NativeBenchmark
     const baselineRef = options.baselineRef ?? revision;
     if (!isCommit(baselineRef)) throw new Error("Use a full reviewed commit SHA.");
     baseline = await prepareReviewedBaseline(repository, tmpdir(), revision, { baselineRef });
-    const result = await runTrustedClaude({ ...options, verifyCheckout: true }, baseline, revision, baselineRef, anthropicMessages(key), signal);
+    const result = await runTrustedClaude(options, baseline, revision, baselineRef, anthropicMessages(key), signal);
     return { outcome: result.outcome, report: result };
   } catch (error) {
     if (error instanceof UnsupportedBenchmarkCase) return { outcome: blocked(error.message) };

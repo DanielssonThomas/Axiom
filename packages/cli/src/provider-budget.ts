@@ -5,6 +5,8 @@ import type { Usage } from "@axiom/contracts";
 export const benchmarkModel = "claude-haiku-4-5-20251001";
 // The pinned model's standard Messages API context window. No beta extension or server tool is forwarded.
 export const inputReservation = 200_000;
+export const benchmarkTools = ["Read", "Glob", "Grep", "Edit", "Write", "Skill"] as const;
+const localToolNames: ReadonlySet<string> = new Set(benchmarkTools);
 
 export type MessagesTransport = (body: Record<string, unknown>, signal: AbortSignal) => Promise<Response>;
 
@@ -76,6 +78,8 @@ export async function openProviderBudget(
   let busy = false;
   let uncertain = false;
   let refused = false;
+  let submitted = 0;
+  let unfamiliarTools = 0;
   const server = createServer(async (request, response) => {
     const reject = (code: number) => response.writeHead(code, { "content-type": "application/json", connection: "close" })
       .end('{"type":"error","error":{"type":"invalid_request_error","message":"Axiom provider request unavailable."}}');
@@ -101,6 +105,10 @@ export async function openProviderBudget(
       return reject(429);
     }
     busy = true;
+    submitted++;
+    if ((body.tools as unknown[] | undefined)?.some((tool) => !localToolNames.has(String(object(tool).name)))) {
+      unfamiliarTools++;
+    }
     try {
       const reply = await upstream(body, deadline);
       if (!reply.ok || !reply.body || !reply.headers.get("content-type")?.startsWith("text/event-stream")) {
@@ -146,6 +154,7 @@ export async function openProviderBudget(
     socketPath,
     close,
     get refused() { return refused; },
+    toolSurface() { return { submitted, unfamiliarTools }; },
     usage(): Usage {
       return uncertain || busy ? { metering: "unknown", reason: "A submitted provider request lacks complete usage." }
         : { metering: "reported", inputTokens, outputTokens };

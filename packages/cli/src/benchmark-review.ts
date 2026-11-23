@@ -51,9 +51,19 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
       if (!isDeepStrictEqual(source, attempt.source) || !isDeepStrictEqual(policy, saved.report.policy)) {
         throw new Error("Grading observation source or policy differs from the recorded attempt.");
       }
+      const actions = Array.isArray(value.actions) ? value.actions as GradingAction[] : undefined;
+      for (const action of actions ?? []) {
+        if (action.kind !== "check") continue;
+        const record = evidenceSchema.parse(action.evidence);
+        if (record.taskId !== id || !isDeepStrictEqual(record.host, attempt.execution?.host) ||
+            !isDeepStrictEqual(record.source, source) || !isDeepStrictEqual(record.policy, policy) ||
+            !isDeepStrictEqual(await store.read("acceptance", record.id), record)) {
+          throw new Error("An independent capability receipt is missing or changed.");
+        }
+      }
       const assertions = gradeCase(evaluation, {
         source, policy, before: snapshot(value.before), after: snapshot(value.after),
-        ...(Array.isArray(value.actions) ? { actions: value.actions as GradingAction[] } : {}),
+        ...(actions === undefined ? {} : { actions }),
       });
       if (!isDeepStrictEqual(assertions, value.assertions)) throw new Error("Independent grading differs from the recorded observation.");
       for (const assertion of assertions) {
