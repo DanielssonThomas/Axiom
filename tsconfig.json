@@ -6,7 +6,8 @@
     "paths": {
       "@axiom/contracts": ["./packages/contracts/src/index.ts"],
       "@axiom/evidence": ["./packages/evidence/src/index.ts"],
-      "@axiom/policy": ["./packages/policy/src/index.ts"]
+      "@axiom/policy": ["./packages/policy/src/index.ts"],
+      "@axiom/bundles": ["./packages/bundles/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "adapters/*/src/**/*.ts", "tests/**/*.ts", "vitest.config.mts"]
