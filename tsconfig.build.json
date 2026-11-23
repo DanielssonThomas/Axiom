@@ -8,6 +8,7 @@
     { "path": "./packages/verification" },
     { "path": "./packages/doctor" },
     { "path": "./packages/benchmark" },
-    { "path": "./packages/bundles" }
+    { "path": "./packages/bundles" },
+    { "path": "./adapters/codex" }
   ]
 }

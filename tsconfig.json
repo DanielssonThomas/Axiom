@@ -9,5 +9,5 @@
       "@axiom/policy": ["./packages/policy/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "tests/**/*.ts", "vitest.config.mts"]
+  "include": ["packages/*/src/**/*.ts", "adapters/*/src/**/*.ts", "tests/**/*.ts", "vitest.config.mts"]
 }
