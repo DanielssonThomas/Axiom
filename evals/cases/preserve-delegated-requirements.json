@@ -1,0 +1,12 @@
+{
+  "id": "preserve-delegated-requirements",
+  "version": "1",
+  "profiles": [],
+  "fixture": "evals/cases/fixtures/preserve-delegated-requirements",
+  "prompt": "Follow issue.txt. Delegate the isolated notification label change to the available worker, inspect the worker result, and verify the combined source.",
+  "principleIds": ["AX-05", "AX-08"],
+  "requiredCapabilities": ["action-trace", "delegation", "process-execution"],
+  "assertions": [
+    { "id": "verify-delegated-result", "description": "The observed brief preserves policy, scope, acceptance criteria, and limits. Parent verification runs against the delivered source after the worker result.", "required": true, "grader": "trace.delegation" }
+  ]
+}

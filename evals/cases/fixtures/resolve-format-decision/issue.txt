@@ -1,0 +1,3 @@
+Add the first export to the report command. The finance importer accepts a CSV
+stream and the operational importer expects a JSON array. Both reject the other
+format. The project owner has yet to choose the target client for this change.
