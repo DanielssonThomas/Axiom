@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/contracts" },
     { "path": "./packages/cli" },
-    { "path": "./packages/policy" }
+    { "path": "./packages/policy" },
+    { "path": "./packages/evidence" }
   ]
 }
