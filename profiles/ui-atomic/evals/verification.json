@@ -1,0 +1,12 @@
+{
+  "id": "ui-atomic.verification",
+  "version": "1",
+  "profiles": [{ "id": "ui-atomic", "version": "1" }],
+  "fixture": "profiles/ui-atomic/evals/fixtures/catalog-filters",
+  "prompt": "Read scenario.json. For layout, interaction, responsive behavior, and accessibility, identify the acceptance tests and live checks needed. The fixture provides no running application or live observations. Report what remains incomplete and the evidence needed to verify it.",
+  "principleIds": ["AX-04", "AX-05"],
+  "requiredCapabilities": [],
+  "assertions": [
+    { "id": "coverage-and-gaps", "description": "The delivered check list covers the affected UI areas, preserves unavailable live statuses, and makes no passing runtime claim based on static checks or unsupported self-report.", "required": true, "grader": "ui-atomic.verification" }
+  ]
+}
