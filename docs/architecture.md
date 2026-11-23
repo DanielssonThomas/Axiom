@@ -1,6 +1,6 @@
 # Architecture
 
-**Status: foundation implemented.** The workspace exports the shared contracts and runs the CLI skeleton. The remaining sections describe v1 implementation and verification requirements.
+The [README](../README.md#status) tracks the current implementation. This document defines v1 responsibilities and verification requirements.
 
 Axiom connects a principle to an applicable workflow, an observable check, evidence, and a truthful completion status. It provides a reusable engineering foundation through native agent integrations, not a new agent runtime.
 
@@ -68,6 +68,8 @@ Import runtime schemas and their inferred TypeScript types from `@axiom/contract
 | `evidenceSchema`, `evidenceOutcomeSchema`, `resultStatusSchema` | Record criterion and source identity, observation provenance, timing, optional command invocation, and artifacts. Outcomes use the five core statuses. Every non-passing outcome includes a reason. |
 
 Digests use `sha256:` followed by 64 lowercase hexadecimal digits. Runtime schemas validate record shape and local invariants. Evidence consumers establish coverage, freshness, and conformance.
+
+`@axiom/doctor` consumes the host's configuration and collected observations through its diagnostic API. It checks source digests and binds stage observations to the reported host and file. File inspection establishes installation, while discovery, loading, and enforcement each require observed evidence. The native integration supplies the configuration and observations.
 
 ## CLI
 
