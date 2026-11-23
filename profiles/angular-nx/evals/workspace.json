@@ -1,0 +1,17 @@
+{
+  "id": "angular-nx.workspace",
+  "version": "1",
+  "profiles": [
+    { "id": "angular-nx", "version": "1" },
+    { "id": "ui-atomic", "version": "1" }
+  ],
+  "fixture": "profiles/angular-nx/evals/fixtures/angular-workspace",
+  "prompt": "Complete the catalog workspace by using its installed generator to create the dashboard page and results collection expected by the catalog library. Preserve shell and model ownership and use the repository's declared Nx build, test, and lint targets.",
+  "principleIds": ["AX-02", "AX-03", "AX-04", "AX-05", "AX-07"],
+  "requiredCapabilities": ["process-execution"],
+  "assertions": [
+    { "id": "catalog-structure", "description": "The inspected source must satisfy Angular project, component, and model ownership rules and the inherited composition check.", "required": true, "grader": "angular-nx.structure" },
+    { "id": "catalog-runtime", "description": "Native build, Angular component tests, and lint must pass in the generated workspace.", "required": true, "grader": "angular-nx.native-tooling" },
+    { "id": "catalog-repeat", "description": "Repeating native generation must preserve the previously generated work and report a collision.", "required": true, "grader": "angular-nx.native-tooling" }
+  ]
+}
