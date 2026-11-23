@@ -69,7 +69,8 @@ const exec = promisify(execFile);
 /** Construct a checkout that only the verifier sees, for the shared evidence source resolver. */
 export async function evidenceSource(root: string, files: FixtureFiles): Promise<SourceScope> {
   await stageFixture(root, files);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "" };
   await exec("git", ["init", "--quiet", "--template=", root], { cwd: root, env });
   return { root, extraFiles: [...files.keys()] };
 }

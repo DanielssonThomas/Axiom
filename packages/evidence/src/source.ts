@@ -17,7 +17,10 @@ export interface SourceScope {
 }
 
 const exec = promisify(execFile);
-const gitOptions = { maxBuffer: 32 * 1024 * 1024, encoding: "buffer" } as const;
+const gitOptions = { maxBuffer: 32 * 1024 * 1024, encoding: "buffer", env: {
+  PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: process.env.HOME,
+  USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+} } as const;
 
 async function readRevision(root: string): Promise<string | undefined> {
   try {

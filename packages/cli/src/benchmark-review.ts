@@ -6,7 +6,7 @@ import { digestSchema, evidenceSchema, policyIdentitySchema, sourceIdentitySchem
 import { EvidenceStore } from "@axiom/evidence";
 import { gradeCase, type GradingAction } from "@axiom/graders";
 import { reviewedCases, reviewedGrader, type runTrustedClaude } from "./native-benchmark.js";
-import { benchmarkRevision, prepareReviewedBaseline, sha256, type ReviewedBaseline } from "./reviewed-baseline.js";
+import { prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 function snapshot(value: unknown): Map<string, string> {
   if (!Array.isArray(value) || value.some((item: unknown) => !Array.isArray(item) || item.length !== 2
@@ -25,7 +25,9 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
     if (sha256(bytes) !== digestSchema.parse(expectedDigest)) throw new Error("Benchmark summary digest mismatch.");
     const saved = JSON.parse(bytes.toString("utf8")) as Archive;
     if (saved.sourceFresh !== true) throw new Error("Trusted source freshness was not established.");
-    const revision = await benchmarkRevision(repository);
+    const revision = await requireCleanBenchmarkRevision(repository);
+    if (saved.revision !== revision) throw new Error("Benchmark evidence belongs to a different source revision.");
+    if (saved.provider !== "injected" && saved.provider !== "anthropic-messages") throw new Error("Unknown provider route.");
     baseline = await prepareReviewedBaseline(repository, tmpdir(), revision, saved);
     if (await reviewedGrader(repository, baseline.directory) !== saved.report.grader.digest) throw new Error("Grader identity differs.");
     const catalog = await reviewedCases(baseline.directory);
@@ -83,10 +85,12 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
       }
       reviews.push({ id, assertions });
     }
+    if (await requireCleanBenchmarkRevision(repository) !== revision) throw new Error("The review checkout changed.");
     const outcome: EvidenceOutcome = reviews.length && reviews.every((item) => Array.isArray(item.assertions))
       ? { status: "passed" } : { status: "blocked", reason: "At least one benchmark attempt lacks a grading observation." };
     return { outcome, report: {
-      review: "evidence-replay", benchmarkOutcome: saved.outcome, baselineDigest: saved.baselineDigest, reviews,
+      review: "evidence-replay", provider: saved.provider, revision, benchmarkOutcome: saved.outcome,
+      baselineDigest: saved.baselineDigest, reviews,
     } };
   } catch {
     return { outcome: { status: "blocked", reason: "The trusted summary, reviewed grader, or recorded evidence could not be reproduced." } as EvidenceOutcome };

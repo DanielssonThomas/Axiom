@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { buildClaudeBundle, createClaudeBackend, supportedVersion } from "@axiom/claude-adapter";
 import { runBenchmark } from "@axiom/benchmark";
@@ -11,7 +12,7 @@ import { evaluationCaseSchema, type Evidence, type EvidenceOutcome, type Usage }
 import { EvidenceStore } from "@axiom/evidence";
 import { gradeCase, unavailablePreviewCase, type GradingAction } from "@axiom/graders";
 import { assertPrivateBenchmarkPath, launchClaudeSandbox } from "./claude-sandbox.js";
-import { anthropicMessages, benchmarkModel, benchmarkTools, inputReservation, openProviderBudget, type MessagesTransport } from "./provider-budget.js";
+import { anthropicMessages, benchmarkModel, benchmarkTools, inputReservation, openProviderBudget, providerRoute, type MessagesTransport } from "./provider-budget.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 const exec = promisify(execFile);
@@ -82,6 +83,7 @@ export async function benchmarkReadiness(agent: string, model: string, program?:
 export async function reviewedGrader(repository: string, baseline: string) {
   const source = join(repository, "evals", "graders");
   const approved = join(baseline, "evals", "graders");
+  const executable = fileURLToPath(new URL(".", import.meta.resolve("@axiom/graders")));
   const files = async (path: string) => (await readdir(path)).filter((name) => name.endsWith(".ts")).sort();
   const names = await files(approved);
   if (!names.length || JSON.stringify(names) !== JSON.stringify(await files(source))) throw new Error("Grader source differs.");
@@ -89,10 +91,13 @@ export async function reviewedGrader(repository: string, baseline: string) {
   for (const name of names) {
     const original = join(approved, name);
     const deployed = join(source, name);
-    if (!(await lstat(original)).isFile() || !(await lstat(deployed)).isFile()) throw new Error("Invalid grader source.");
+    const compiled = join(executable, name.replace(/\.ts$/, ".js"));
+    if (!(await lstat(original)).isFile() || !(await lstat(deployed)).isFile() || !(await lstat(compiled)).isFile()) {
+      throw new Error("Invalid grader source or executable.");
+    }
     const bytes = await readFile(original);
     if (!bytes.equals(await readFile(deployed))) throw new Error("Grader source differs.");
-    digests.push([name, sha256(bytes)]);
+    digests.push([name, sha256(bytes), sha256(await readFile(compiled))]);
   }
   return sha256(JSON.stringify(digests));
 }
@@ -194,19 +199,23 @@ export async function runTrustedClaude(
         capabilities: [{ id: "action-trace", available: true }],
         limits: { timeoutMs: options.timeoutSeconds * 1000, maxAttempts: caseIds.length * 2 * options.repetitions, maxConcurrency: 1 },
         repetitions: options.repetitions, signal: cancellation,
-        openRuntime: async (workspace) => ({ kind: "isolated", workspace, close: async () => {},
-          backend: { async run(request, abort) {
-            workspaces.set(request.id, workspace);
-            const before = provider.usage();
-            const initialSurface = provider.toolSurface();
-            const result = await backend.run(request, abort);
-            const finalSurface = provider.toolSurface();
-            if (finalSurface.submitted > initialSurface.submitted && finalSurface.unfamiliarTools === initialSurface.unfamiliarTools) {
-              observedLocalToolSurface.add(request.id);
-            }
-            return { ...result, usage: measuredAttempt(before, provider.usage()) };
-          } },
-        }),
+        openRuntime: async (workspace) => {
+          let running: ReturnType<typeof backend.run> | undefined;
+          return { kind: "isolated", workspace, close: async () => { await running?.catch(() => {}); },
+            backend: { async run(request, abort) {
+              workspaces.set(request.id, workspace);
+              const before = provider.usage();
+              const initialSurface = provider.toolSurface();
+              running = backend.run(request, abort);
+              const result = await running;
+              const finalSurface = provider.toolSurface();
+              if (finalSurface.submitted > initialSurface.submitted && finalSurface.unfamiliarTools === initialSurface.unfamiliarTools) {
+                observedLocalToolSurface.add(request.id);
+              }
+              return { ...result, usage: measuredAttempt(before, provider.usage()) };
+            } },
+          };
+        },
         grader: {
           version: "1", digest: verifiedGrader,
           async grade(evaluation, value) {
@@ -243,7 +252,7 @@ export async function runTrustedClaude(
         : provider.refused || metering.metering !== "reported" || cancellation.aborted
           ? blocked("The benchmark budget, provider usage or cancellation prevented complete execution.")
           : report.outcome;
-      const result = { revision, sourceFresh, baselineRef, baselineDigest: baseline.digest, bundleDigest: bundle.manifest.digest,
+      const result = { revision, sourceFresh, provider: providerRoute(upstream), baselineRef, baselineDigest: baseline.digest, bundleDigest: bundle.manifest.digest,
         tokenBudget: options.tokenBudget, maxOutputTokens: options.maxOutputTokens, metering, outcome, report, observations };
       const bytes = JSON.stringify(result, null, 2) + "\n";
       await writeFile(join(evidenceDirectory, "benchmark.json"), bytes, { flag: "wx", mode: 0o600 });

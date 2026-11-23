@@ -88,7 +88,7 @@ Record the artifact and policy digests, host version and surface, selected scope
 
 ## Run a local behavioral benchmark
 
-After building from a clean reviewed checkout, run the built-in Claude Code 2.1.330 benchmark on Linux with Bubblewrap at `/usr/bin/bwrap` and working unprivileged namespaces. Use an existing authorized Anthropic API key in the trusted operator environment as `ANTHROPIC_API_KEY`. The runner uses that key only for the official Anthropic endpoint. The native process receives a disposable profile and a placeholder key for the local broker.
+Run the built-in Claude Code 2.1.330 benchmark on Linux with Bubblewrap at `/usr/bin/bwrap` and working unprivileged namespaces. Use a clean reviewed checkout, the frozen lockfile, and freshly built grader and CLI outputs. If reusing a checkout across revisions, use `pnpm exec tsc --build tsconfig.build.json --force` before `pnpm build` to regenerate the JavaScript. Use an existing authorized Anthropic API key in the trusted operator environment as `ANTHROPIC_API_KEY`. The runner uses that key only for the official Anthropic endpoint. The native process receives a disposable profile and a placeholder key for the local broker.
 
 ```sh
 node packages/cli/dist/index.js benchmark claude --allow-paid
@@ -100,11 +100,11 @@ Use `--program /absolute/path/to/claude` for a binary outside `PATH`. Choose a r
 
 Existing native authentication can run ordinary native sessions. Use `claude auth status`, `codex login status`, or `hermes --profile NAME auth list openai-codex` to inspect the corresponding supported login. Native Claude subscription login, Codex ChatGPT login, and the pinned Hermes OpenAI Codex OAuth provider are official options. Their native routes lack an independently verified pre-call token cap in Axiom. Codex and Hermes parent terminal usage also omits observed worker usage. The current qualifying-budget route requires the Anthropic API key described above. [Claude authentication](https://code.claude.com/docs/en/authentication) · [Codex login](https://developers.openai.com/codex/auth) · [Hermes providers](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/website/docs/integrations/providers.md#openai-codex--chatgpt-subscription)
 
-The CLI prints the private `evidenceDirectory` and the summary's `evidenceDigest`. Retain that digest separately. The directory defaults to a new subdirectory of `.axiom/runs`. Inspect `benchmark.json`, the saved grading observations, and the `acceptance/` evidence records. To replay the independent graders locally, supply the printed directory and digest.
+The CLI prints the private `evidenceDirectory` and the summary's `evidenceDigest`. Retain that digest separately. The directory defaults to a new subdirectory of `.axiom/runs`. Inspect `benchmark.json`, the saved grading observations, and the `acceptance/` evidence records. To replay the independent graders locally, use the clean source revision recorded in the summary and matching freshly built grader outputs. Supply the printed directory and digest.
 
 ```sh
 node packages/cli/dist/index.js benchmark-review \
   --evidence /absolute/path/to/benchmark-directory --digest sha256:REPLACE_WITH_PRINTED_DIGEST
 ```
 
-The review status covers evidence integrity and reproducibility. The replay includes the original benchmark disposition and each replayed assertion. Keep this archive local unless you approve its workspace snapshots for sharing.
+The review status covers evidence integrity and reproducibility. The replay includes the provider route, original benchmark disposition, and each replayed assertion. An `injected` provider route identifies fixture evidence. Keep this archive local unless you approve its workspace snapshots for sharing.

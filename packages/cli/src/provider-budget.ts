@@ -9,12 +9,19 @@ export const benchmarkTools = ["Read", "Glob", "Grep", "Edit", "Write", "Skill"]
 const localToolNames: ReadonlySet<string> = new Set(benchmarkTools);
 
 export type MessagesTransport = (body: Record<string, unknown>, signal: AbortSignal) => Promise<Response>;
+const anthropicTransports = new WeakSet<MessagesTransport>();
+
+export function providerRoute(transport: MessagesTransport) {
+  return anthropicTransports.has(transport) ? "anthropic-messages" as const : "injected" as const;
+}
 
 export function anthropicMessages(key: string): MessagesTransport {
-  return (body, signal) => fetch("https://api.anthropic.com/v1/messages", {
+  const transport: MessagesTransport = (body, signal) => fetch("https://api.anthropic.com/v1/messages", {
     method: "POST", redirect: "error", signal, body: JSON.stringify(body),
     headers: { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": key },
   });
+  anthropicTransports.add(transport);
+  return transport;
 }
 
 const fields = new Set(["model", "messages", "system", "tools", "tool_choice", "max_tokens", "stream",
