@@ -53,7 +53,7 @@ export function readBundle(root: string): BundleManifest {
       || digest(JSON.stringify(metadata)) !== digestSchema.parse(expected)) {
     throw new Error("Expected an intact supported Hermes bundle manifest.");
   }
-  policyIdentitySchema.parse(metadata.policy);
+  const policy = policyIdentitySchema.parse(metadata.policy);
   const inventory = new Set<string>();
   for (const item of metadata.files) {
     assertFilePath(item.path);
@@ -62,6 +62,10 @@ export function readBundle(root: string): BundleManifest {
     digestSchema.parse(item.digest);
   }
   for (const file of ["plugin.yaml", "__init__.py", "checker.mjs", "core/AXIOMS.md"]) {
+    if (!inventory.has(file)) throw new Error(`The Hermes bundle is missing ${file}.`);
+  }
+  for (const { id } of policy.profiles) {
+    const file = `profiles/${id}/PROFILE.md`;
     if (!inventory.has(file)) throw new Error(`The Hermes bundle is missing ${file}.`);
   }
   for (const { id } of metadata.skills) {

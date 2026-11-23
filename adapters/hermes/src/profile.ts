@@ -181,6 +181,11 @@ export function changeHermesPlugin(target: HermesProfile, change: Change): Plugi
 export interface HermesActivation {
   installed: EvidenceOutcome;
   discoverable: EvidenceOutcome;
+  /** Complete core and any selected profile retrieval instructions in the system prompt. */
+  coreLoaded: EvidenceOutcome;
+  /** Per-profile transport evidence from native skill_view results in the provider request. */
+  profileLoads: (PolicyIdentity["profiles"][number] & { outcome: EvidenceOutcome })[];
+  /** Core and all selected profile documents observed in the same provider request. */
   loaded: EvidenceOutcome;
   enabled: boolean;
   policy?: PolicyIdentity;
@@ -223,13 +228,14 @@ function observedRegistration(profile: string, packageDigest: string, instance: 
 
 function observedLoad(
   profile: string, packageDigest: string, registration: Registration | undefined, session?: string,
-): EvidenceOutcome {
+): { core: EvidenceOutcome; profiles: Map<string, string> } {
   const pending: EvidenceOutcome = { status: "not_run", reason: "No selected Hermes session observation." };
-  if (registration?.missingReason) return blocked(registration.missingReason);
-  if (!registration || !session || !/^[a-z0-9_-]{1,128}$/i.test(session)) return pending;
+  const unread = (core: EvidenceOutcome) => ({ core, profiles: new Map<string, string>() });
+  if (registration?.missingReason) return unread(blocked(registration.missingReason));
+  if (!registration || !session || !/^[a-z0-9_-]{1,128}$/i.test(session)) return unread(pending);
   const path = join(profile, ".axiom-hermes", `loaded-${session}.json`);
-  if (!existsSync(path)) return pending;
-  if (realpathSync(path) !== path) return blocked("The Hermes request observation cannot be redirected.");
+  if (!existsSync(path)) return unread(pending);
+  if (realpathSync(path) !== path) return unread(blocked("The Hermes request observation cannot be redirected."));
   try {
     const observation = JSON.parse(readFileSync(path, "utf8"));
     if (observation.stage === "loaded" && observation.mechanism === "llm_request"
@@ -239,11 +245,19 @@ function observedLoad(
       && observation.sections.length === registration.sections.length
       && registration.sections.every((section, index) =>
         observation.sections[index]?.id === section.id && observation.sections[index]?.digest === section.digest)) {
-      return { status: "passed" };
+      const result = unread({ status: "passed" });
+      if (Array.isArray(observation.profiles)) {
+        for (const profile of observation.profiles) {
+          if (typeof profile?.id === "string" && digestSchema.safeParse(profile?.digest).success) {
+            result.profiles.set(profile.id, profile.digest);
+          }
+        }
+      }
+      return result;
     }
-    return blocked("The observed Hermes request does not contain the complete selected Axiom policy.");
+    return unread(blocked("The observed Hermes request does not contain the complete Axiom core and profile index."));
   } catch {
-    return blocked("The native Hermes session observation could not be read.");
+    return unread(blocked("The native Hermes session observation could not be read."));
   }
 }
 
@@ -253,7 +267,9 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
     const { doc } = configAt(profile);
     const installed = join(profile, "plugins", pluginName);
     const pending: EvidenceOutcome = { status: "not_run", reason: "No Axiom bundle is installed in this profile." };
-    if (!existsSync(installed)) return { installed: pending, discoverable: pending, loaded: pending, enabled: false };
+    if (!existsSync(installed)) return {
+      installed: pending, discoverable: pending, coreLoaded: pending, profileLoads: [], loaded: pending, enabled: false,
+    };
     if (realpathSync(installed) !== installed) throw new Error("Axiom's installed directory cannot be redirected.");
     const bundle = readBundle(installed);
     verifyBundle(installed, bundle);
@@ -261,15 +277,29 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
     const disabled = blocked("Axiom is disabled in the selected Hermes profile.");
     const instance = enabled ? currentInstallation(installed) : undefined;
     const registered = instance ? observedRegistration(profile, bundle.digest, instance) : undefined;
+    const observed = enabled ? observedLoad(profile, bundle.digest, registered, session) : undefined;
+    const coreLoaded = observed?.core ?? disabled;
+    const profileLoads: HermesActivation["profileLoads"] = bundle.policy.profiles.map((selected) => {
+      if (coreLoaded.status !== "passed") return { ...selected, outcome: coreLoaded };
+      const actual = observed?.profiles.get(selected.id);
+      const expected = bundle.files.find(({ path }) => path === `profiles/${selected.id}/PROFILE.md`)?.digest;
+      const outcome: EvidenceOutcome = actual === undefined
+        ? { status: "not_run", reason: "The current Hermes request has no complete native retrieval of this profile." }
+        : actual === expected ? { status: "passed" } : blocked("The retrieved profile content differs from the installed policy.");
+      return { ...selected, outcome };
+    });
+    const loaded = coreLoaded.status === "passed" && profileLoads.some(({ outcome }) => outcome.status !== "passed")
+      ? blocked("The current Hermes request lacks complete retrieval of the selected Axiom profiles.")
+      : coreLoaded;
     return {
       installed: { status: "passed" }, policy: bundle.policy, bundleDigest: bundle.digest, enabled,
       discoverable: !enabled ? disabled : registered ? { status: "passed" }
         : { status: "not_run", reason: "Hermes has not reported registration of this bundle." },
-      loaded: !enabled ? disabled : observedLoad(profile, bundle.digest, registered, session),
+      coreLoaded, profileLoads, loaded,
     };
   } catch {
     const invalid = blocked("The selected Hermes profile or bundle could not be verified.");
-    return { installed: invalid, discoverable: invalid, loaded: invalid, enabled: false };
+    return { installed: invalid, discoverable: invalid, coreLoaded: invalid, profileLoads: [], loaded: invalid, enabled: false };
   }
 }
 

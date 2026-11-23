@@ -13,6 +13,7 @@ import * as hermes from "../../../adapters/hermes/src/index.js";
 import { runHermes } from "../../../adapters/hermes/src/process.js";
 import { assembleBundles, writeBundles } from "../../../packages/bundles/src/index.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
+import { inspectAngularWorkspace } from "../../../profiles/angular-nx/checks.js";
 import { assessInstalledHost, transportRequirements } from "./qualification.js";
 import { openLoopback, ordinaryPrompt, type NativeHost, type NativeLoopback } from "./loopback.js";
 
@@ -51,7 +52,6 @@ interface InstalledFixture {
   session(enabled: boolean): Promise<EvidenceOutcome>;
   assertPreserved(): Promise<void>;
   brokenControl(): Promise<EvidenceOutcome>;
-  profileLimit?(): Promise<EvidenceOutcome>;
 }
 
 async function fixtureCatalog(source: string) {
@@ -218,7 +218,7 @@ async function codexFixture(input: Fixture): Promise<InstalledFixture> {
   };
 }
 
-async function hermesFixture(input: Fixture): Promise<InstalledFixture> {
+async function hermesFixture(input: Fixture): Promise<InstalledFixture & { profileDisclosure(): Promise<EvidenceOutcome> }> {
   const { root, workspace, source, revision, executable, host, loopback, signal } = input;
   const home = join(root, "h");
   const target = { home, profile: "qualification" };
@@ -242,14 +242,14 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture> {
   const next = build("0.1.1");
   const archive = join(root, "evidence");
   const backend = new hermes.HermesBenchmarkBackend({
-    executable, profile: target, archiveDirectory: archive, provider: "custom", maxTurns: 3,
+    executable, profile: target, archiveDirectory: archive, provider: "custom", maxTurns: 6,
     baseUrl: loopback.endpoint + "/v1", environment,
   });
   let sequence = 0;
-  const runSession = (enabled: boolean, policy: PolicyIdentity) =>
+  const runSession = (enabled: boolean, policy: PolicyIdentity, prompt = ordinaryPrompt, timeoutMs = 24_000) =>
     backend.run({
       id: `installed-session-${++sequence}`, caseId: "native-transport", workspace, host,
-      policy, prompt: ordinaryPrompt, mode: enabled ? "with_axiom" : "without_axiom", timeoutMs: 24_000,
+      policy, prompt, mode: enabled ? "with_axiom" : "without_axiom", timeoutMs,
     }, signal);
   const session = async (enabled: boolean) => {
     const result = await runSession(enabled, first.manifest.policy);
@@ -294,17 +294,87 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture> {
         await writeFile(file, intact);
       }
     },
-    async profileLimit() {
+    async profileDisclosure() {
       const profiled = build("0.1.2", ["angular-nx"]);
       expect(hermes.changeHermesPlugin(target, { kind: "install", bundle: profiled.directory }).outcome).toEqual(passed);
       try {
-        const result = await runSession(true, profiled.manifest.policy);
-        expect(result.outcome.status).toBe("blocked");
-        const { loaded } = hermes.inspectHermesActivation(target);
-        expect(loaded, JSON.stringify(result.outcome)).toMatchObject({
-          status: "blocked", reason: expect.stringContaining("aggregate prompt-section limit"),
+        const prompt = "Fix the disposable catalog page to follow the Angular/Nx project's conventions.";
+        const projectRoot = "libs/catalog/src";
+        const publicApi = `${projectRoot}/index.ts`;
+        const page = `${projectRoot}/pages/catalog/catalog.component`;
+        const component = `${page}.ts`;
+        const template = `${page}.html`;
+        const pageSource = (metadata: string) =>
+          `import { Component } from "@angular/core";\n@Component({ ${metadata} })\nexport class CatalogComponent {}\n`;
+        const original = pageSource('template: "<p>Catalog</p>"');
+        const corrected = pageSource('templateUrl: "./catalog.component.html"');
+        const files = { [publicApi]: "export {};\n", [component]: original, [template]: "<p>Catalog</p>\n" };
+        for (const [path, content] of Object.entries(files)) {
+          const full = join(workspace, path);
+          await mkdir(join(full, ".."), { recursive: true });
+          await writeFile(full, content);
+        }
+        const inspect = () => inspectAngularWorkspace({
+          files, projects: [{ name: "catalog", kind: "library", sourceRoot: projectRoot, publicApi }], paths: {}, models: [],
         });
-        return loaded;
+        expect(inspect()).toContainEqual(expect.objectContaining({ code: "split-component", path: component }));
+
+        const profiles = await Promise.all(["angular-nx", "ui-atomic"].map(async (id) => ({
+          id, name: `axiom:profile-${id}`, text: await readFile(join(source, "profiles", id, "PROFILE.md"), "utf8"),
+        })));
+        const view = (name: string) => ({ name: "skill_view", arguments: JSON.stringify({ name, file_path: "PROFILE.md" }) });
+        loopback.requests.length = 0;
+        let observedProfiles: string[] = [];
+        loopback.respondWithHermesTool(async () => {
+          loopback.respondWithHermesTool(async () => {
+            loopback.respondWithHermesTool(async () => {
+              // Model behavior is scripted here. Send the native write only after both canonical
+              // tool results reached the provider. The independent structural check runs below.
+              const results = loopback.requests.at(-1)!.toolResults.map((raw) => JSON.parse(raw));
+              observedProfiles = profiles.filter(({ name, text }) => results.some((result) =>
+                result?.success === true && result.name === name && result.file === "PROFILE.md" && result.content === text,
+              )).map(({ id }) => id);
+              // Hermes requires a fresh read before it will overwrite an existing file.
+              const path = join(workspace, component);
+              loopback.respondWithHermesTool(async () => ({
+                name: "write_file",
+                arguments: JSON.stringify({ path, content: observedProfiles.length === profiles.length ? corrected : original }),
+              }));
+              return { name: "read_file", arguments: JSON.stringify({ path }) };
+            });
+            return view(profiles[1]!.name);
+          });
+          return view(profiles[0]!.name);
+        });
+        const result = await runSession(true, profiled.manifest.policy, prompt, 35_000);
+        expect(observedProfiles, JSON.stringify({
+          outcome: result.outcome,
+          nativeToolResults: loopback.requests.map(({ toolResults }) => toolResults
+            .map((raw) => { const { name, file, success, error } = JSON.parse(raw); return { name, file, success, error }; })),
+        })).toEqual(["angular-nx", "ui-atomic"]);
+        expect(result.outcome).toEqual(passed);
+        expect(result.host).toEqual(host);
+        const firstRequest = loopback.requests[0]!.text;
+        const core = (await readFile(join(source, "core", "AXIOMS.md"), "utf8")).trimEnd();
+        const frames = firstRequest.split("<!-- hermes-plugin-sections:start -->\n")[1]!
+          .split("\n<!-- hermes-plugin-sections:end -->")[0]!
+          .replace(/^## Plugin Context: axiom\.policy-\d{3}\n<!-- hermes-plugin-section-chars:\d+ -->\n\n/gm, "");
+        expect(frames).toContain(core);
+        expect(frames).toContain(profiled.manifest.policy.digest);
+        expect(firstRequest).toContain(prompt);
+        for (const { name, text } of profiles) {
+          expect(frames).toContain(name);
+          expect(frames).not.toContain(text.trimEnd());
+        }
+        const { session } = JSON.parse(await readFile(join(archive, result.artifacts[0]!.location), "utf8"));
+        expect(hermes.inspectHermesActivation(target, session)).toMatchObject({
+          coreLoaded: passed, loaded: passed, profileLoads: profiles.map(({ id }) => ({ id, outcome: passed })),
+        });
+        files[component] = await readFile(join(workspace, component), "utf8");
+        files[template] = await readFile(join(workspace, template), "utf8");
+        expect(files[component]).toBe(corrected);
+        expect(inspect()).toEqual([]);
+        return result.outcome;
       } finally {
         expect(hermes.changeHermesPlugin(target, { kind: "uninstall" }).outcome).toEqual(passed);
       }
@@ -372,7 +442,6 @@ test.concurrent.each(rows)("$agent installed artifact and ordinary-session matri
     await observe();
     await fixture.uninstall();
     await observe();
-    const profileLimit = await fixture.profileLimit?.();
     await fixture.assertPreserved();
     expect(await snapshotSource({ root: source })).toEqual(observedSource);
     const observations = Object.fromEntries(transportRequirements.map((requirement) => [requirement, passed]));
@@ -382,10 +451,37 @@ test.concurrent.each(rows)("$agent installed artifact and ordinary-session matri
     process.stdout.write(JSON.stringify({
       kind: "installed-native-loopback", source: observedSource, host, bundleDigest: fixture.digest,
       updatedBundleDigest: fixture.updatedDigest, policy: fixture.core, updatedPolicy: fixture.updatedPolicy,
-      mechanism: fixture.mechanism, brokenControl, ...(profileLimit && { profileLimit }), ...report,
+      mechanism: fixture.mechanism, brokenControl, ...report,
     }) + "\n");
   } finally {
     await loopback.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 125_000);
+
+test.runIf(process.env.AXIOM_HERMES_CLI && process.platform === "linux")(
+  "Hermes retrieves and exercises the selected Angular/Nx and inherited atomic UI profile",
+  async () => {
+    const row = rows.find(({ agent }) => agent === "hermes")!;
+    const source = process.cwd();
+    const observedSource = await snapshotSource({ root: source });
+    const host = { agent: row.agent, version: row.version, model: row.model, surface: "cli", os: process.platform };
+    const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-profile-")));
+    const workspace = join(root, "project");
+    const loopback = await openLoopback(row.agent, row.model);
+    try {
+      await mkdir(workspace);
+      execFileSync("git", ["init", "--quiet"], { cwd: workspace, timeout: 3_000 });
+      const fixture = await hermesFixture({
+        root, workspace, source, revision: observedSource.revision ?? observedSource.digest,
+        executable: process.env.AXIOM_HERMES_CLI!, host, loopback, signal: AbortSignal.timeout(50_000),
+      });
+      expect(await fixture.profileDisclosure()).toEqual(passed);
+      await fixture.assertPreserved();
+      expect(await snapshotSource({ root: source })).toEqual(observedSource);
+    } finally {
+      await loopback.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000,
+);

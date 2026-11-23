@@ -10,7 +10,7 @@ afterEach(() => {
   for (const path of workspaces.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(tool = "read_file") {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "axiom-hermes-backend-")));
   workspaces.push(directory);
   const home = join(directory, "hermes-home");
@@ -48,8 +48,8 @@ if (prompt !== 'A literal $(not shell) task.' || !argv.includes("--format") || !
   || process.env.HERMES_HOME !== ${JSON.stringify(home)}) process.exit(8);
 for (const event of [
   {type:"system",subtype:"init",model:"fixture-model"},
-  {type:"tool_use",name:"read_file",tool_call_id:"call-1",input:{secret:"not archived"}},
-  {type:"tool_result",name:"read_file",tool_call_id:"call-1",is_error:false,duration_ms:3},
+  {type:"tool_use",name:${JSON.stringify(tool)},tool_call_id:"call-1",input:{secret:"not archived"}},
+  {type:"tool_result",name:${JSON.stringify(tool)},tool_call_id:"call-1",is_error:false,duration_ms:3},
   {type:"result",session_id:"session-one",exit_code:0,tokens:{input:4,output:1,total:5}}
 ]) console.log(JSON.stringify(event));
 `);
@@ -110,6 +110,16 @@ test("blocks archive and profile overlaps before launching Hermes", async () => 
     .toMatchObject({ status: "blocked", reason: expect.stringContaining("redirected") });
   expect(existsSync(join(request.workspace, "subdirectory"))).toBe(false);
   expect(existsSync(join(home, "version-probed"))).toBe(false);
+});
+
+test("marks aggregate token usage unknown when native delegation omits the worker's tokens", async () => {
+  const { backend, request } = fixture("delegate_task");
+  const actual = backendResultSchema.parse(await backend.run(request, new AbortController().signal));
+  expect(actual).toMatchObject({
+    outcome: { status: "passed" }, usage: { metering: "unknown", reason: expect.stringContaining("worker") },
+  });
+  expect(actual.usage).not.toHaveProperty("inputTokens");
+  expect(actual.usage).not.toHaveProperty("outputTokens");
 });
 
 test("cancels a running host and reports unavailable activation and bounded timeout", async () => {

@@ -82,7 +82,12 @@ function normalize(stdout: string): Trace | undefined {
         ? { metering: "reported", inputTokens: input, outputTokens: output } : unknownUsage };
     }
   }
-  if (terminal && model) return { ...terminal, model, calls };
+  if (terminal && model) {
+    const usage: Trace["usage"] = calls.some(({ name }) => name === "delegate_task")
+      ? { metering: "unknown", reason: "Hermes terminal usage excludes delegated worker tokens." }
+      : terminal.usage;
+    return { ...terminal, model, calls, usage };
+  }
 }
 
 /** Run an independently staged case through Hermes' native one-shot JSONL interface. */
@@ -203,9 +208,10 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       if (returned.code !== 0) return result({ status: "failed", reason: "Hermes reported unsuccessful native execution." }, evidence);
       if (useAxiom) {
         const observed = inspectHermesActivation(profile, trace.session);
-        if (observed.bundleDigest !== bundleDigest || observed.loaded.status !== "passed") {
+        if (observed.bundleDigest !== bundleDigest) {
           return result({ status: "blocked", reason: "Hermes did not observe Axiom policy loading in the benchmark session." }, evidence);
         }
+        if (observed.loaded.status !== "passed") return result({ status: "blocked", reason: observed.loaded.reason }, evidence);
       }
       return result({ status: "passed" }, evidence);
     } catch {

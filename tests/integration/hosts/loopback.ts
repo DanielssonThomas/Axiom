@@ -7,6 +7,7 @@ export const ordinaryPrompt = "Acknowledge this disposable native session.";
 export interface RequestObservation {
   model: string;
   text: string;
+  toolResults: string[];
 }
 
 interface FixtureTool {
@@ -17,10 +18,11 @@ interface FixtureTool {
 interface ProtocolReply {
   protocol: NativeHost;
   model: string;
+  requestNumber: number;
   tool?: FixtureTool;
 }
 
-function send(response: ServerResponse, { protocol, model, tool }: ProtocolReply) {
+function send(response: ServerResponse, { protocol, model, requestNumber, tool }: ProtocolReply) {
   const text = "Native fixture acknowledged.";
   response.setHeader("content-type", "text/event-stream");
   const frame = (data: object, event?: string) => response.write(
@@ -53,7 +55,7 @@ function send(response: ServerResponse, { protocol, model, tool }: ProtocolReply
   } else {
     const chunk = { id: "fixture", object: "chat.completion.chunk", created: 1, model };
     frame({ ...chunk, choices: [{ index: 0, finish_reason: null, delta: tool ? {
-      role: "assistant", tool_calls: [{ index: 0, id: "call-fixture", type: "function", function: tool }],
+      role: "assistant", tool_calls: [{ index: 0, id: `call-fixture-${requestNumber}`, type: "function", function: tool }],
     } : { role: "assistant", content: text } }] });
     frame({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }] });
     frame({ ...chunk, choices: [], usage: { prompt_tokens: 9, completion_tokens: 3, total_tokens: 12 } });
@@ -88,10 +90,14 @@ export async function openLoopback(protocol: NativeHost, model: string) {
       const body: unknown = JSON.parse(input);
       const requestedModel = body && typeof body === "object" && "model" in body ? body.model : undefined;
       if (typeof requestedModel !== "string") throw new Error("The native fixture request did not include a model.");
-      requests.push({ model: requestedModel, text: strings(body).join("\n") });
+      const messages = body && typeof body === "object" && "messages" in body ? body.messages : undefined;
+      const toolResults = Array.isArray(messages) ? messages.flatMap((message) =>
+        message?.role === "tool" && typeof message.content === "string" ? [message.content] : [],
+      ) : [];
+      requests.push({ model: requestedModel, text: strings(body).join("\n"), toolResults });
       const tool = nextHermesTool;
       nextHermesTool = undefined;
-      send(response, { protocol, model, ...(tool ? { tool: await tool() } : {}) });
+      send(response, { protocol, model, requestNumber: requests.length, ...(tool ? { tool: await tool() } : {}) });
     } catch {
       response.writeHead(400).end();
     }

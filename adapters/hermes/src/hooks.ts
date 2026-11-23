@@ -44,8 +44,8 @@ export async function checkHermesEvent(
     }
     if (native && observed.status === "passed") {
       const activation = inspectHermesActivation(native.profile, native.session);
-      if (activation.policy?.digest !== manifest.policy.digest || activation.loaded.status !== "passed") {
-        observed = { status: "blocked", reason: "Required Axiom loading is absent in the current Hermes session." };
+      if (activation.policy?.digest !== manifest.policy.digest || activation.coreLoaded.status !== "passed") {
+        observed = { status: "blocked", reason: "Required Axiom core loading is absent in the current Hermes session." };
       }
     }
     const assessment = assessPolicy({
