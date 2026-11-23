@@ -212,3 +212,46 @@ test("executes documented Codex argv on supported Linux and explicitly blocks ot
   const cancelled = await backend.run({ ...request, id: "try-three" }, AbortSignal.abort());
   expect(cancelled.outcome).toMatchObject({ status: "not_run" });
 });
+
+test.runIf(process.platform === "linux")("checks native ChatGPT auth and never archives unvetted command text", async () => {
+  const program = join(root, "codex-native-auth");
+  const authHome = join(root, "auth-profile");
+  const workspace = join(root, "workspace");
+  const artifacts = join(root, "artifacts");
+  const canary = "sensitive-fixture-canary";
+  await Promise.all([mkdir(authHome), mkdir(workspace)]);
+  await writeFile(join(authHome, "auth.json"), canary, { mode: 0o600 });
+  await writeFile(join(authHome, "AGENTS.md"), "An unrelated profile instruction.");
+  await writeFile(program, [
+    "#!/usr/bin/env node",
+    'const a = process.argv.slice(2), assert = require("node:assert/strict"), fs = require("node:fs");',
+    'const p = require("node:path");',
+    'if (a[0] === "--version") { console.log("codex-cli 0.172.0-alpha.2"); process.exit(); }',
+    'if (a[0] === "login") {',
+    ' assert.equal(a[1], "status");',
+    ' assert.equal(fs.readlinkSync(p.join(process.env.CODEX_HOME, "auth.json")), ' + JSON.stringify(join(authHome, "auth.json")) + ');',
+    ' assert(!fs.existsSync(p.join(process.env.CODEX_HOME, "AGENTS.md")));',
+    ' assert.match(fs.readFileSync(p.join(process.env.CODEX_HOME, "config.toml"), "utf8"), /default_permissions = "axiom-benchmark"/);',
+    ' console.error(fs.existsSync("allow-native-login") ? "Logged in using ChatGPT" : "API key configured");',
+    ' process.exit();',
+    '}',
+    'if (a[0] === "sandbox") { assert.equal(a[2], "axiom-benchmark"); process.exit(); }',
+    'assert(a.includes("exec") && a.includes("--ephemeral") && !a.includes("--sandbox"));',
+    'fs.writeFileSync("executed", "yes");',
+    'console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: ' + JSON.stringify(canary) + ' } }));',
+    'console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } }));',
+  ].join("\n"), { mode: 0o700 });
+  const request: BackendRequest = {
+    id: "native-auth", caseId: "fixture", prompt: "fixture prompt", workspace, host,
+    policy: { version: "1", digest: `sha256:${"0".repeat(64)}`, profiles: [] }, mode: "without_axiom", timeoutMs: 5000,
+  };
+  const backend = createCodexBackend({ program, artifacts, authHome });
+  const run = () => backend.run(request, new AbortController().signal);
+  expect(await run()).toMatchObject({ outcome: { status: "blocked", reason: expect.stringMatching(/ChatGPT/) }, artifacts: [] });
+  await expect(readFile(join(workspace, "executed"))).rejects.toHaveProperty("code", "ENOENT");
+  await writeFile(join(workspace, "allow-native-login"), "");
+  const result = await run();
+  expect(result).toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
+  expect(JSON.stringify(result)).not.toContain(canary);
+  await expect(readFile(join(authHome, "auth.json"), "utf8")).resolves.toBe(canary);
+});

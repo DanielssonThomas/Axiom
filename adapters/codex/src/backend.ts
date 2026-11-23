@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { backendRequestSchema, backendResultSchema, usageSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
@@ -71,11 +71,55 @@ export interface CodexBackendOptions {
   /** An explicitly vetted provider configuration, used unchanged in each trial. */
   configToml?: string;
   environment?: Readonly<Record<string, string>>;
+  /** Reuse a native ChatGPT file-store login with an otherwise disposable home. */
+  authHome?: string;
 }
 
 function inside(root: string, path: string): boolean {
   const offset = relative(root, path);
   return !isAbsolute(offset) && offset !== ".." && !offset.startsWith(`..${sep}`);
+}
+
+const standardPermissions = "axiom-benchmark";
+
+async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal) {
+  const source = await realpath(authHome);
+  const credential = join(source, "auth.json");
+  if (inside(profile.workspace, source) || inside(source, profile.workspace) ||
+      inside(archive, source) || inside(source, archive) ||
+      !(await lstat(credential).catch(() => undefined))?.isFile()) {
+    return "A separate Codex home containing native file-store authentication is required.";
+  }
+  const link = join(profile.home, "auth.json");
+  // Codex owns reads and atomic OAuth refreshes through this link. Axiom never copies the store.
+  await symlink(credential, link, "file");
+  await writeFile(join(profile.home, "config.toml"), [
+    'cli_auth_credentials_store = "file"',
+    `default_permissions = "${standardPermissions}"`,
+    "[features]",
+    "apps = false",
+    "[analytics]",
+    "enabled = false",
+    `[permissions.${standardPermissions}.filesystem]`,
+    '":minimal" = "read"',
+    '":workspace_roots" = "write"',
+    `${JSON.stringify(profile.program)} = "read"`,
+    `[permissions.${standardPermissions}.network]`,
+    "enabled = false",
+    "[shell_environment_policy]",
+    'inherit = "none"',
+    "",
+  ].join("\n"), { flag: "wx", mode: 0o600 });
+  const login = await runCodex(profile, ["login", "status"], { signal, captureStderr: true });
+  if (login.code !== 0 || !login.stderr?.split(/\r?\n/).includes("Logged in using ChatGPT")) {
+    return "This Codex profile must use a native ChatGPT file-store login.";
+  }
+  const probe = await runCodex(profile, [
+    "sandbox", "-P", standardPermissions, "--include-managed-config", "-C", profile.workspace, "--",
+    "/bin/sh", "-c", 'test -w "$1" && ! test -r "$2" && ! test -r "$3" && ! test -r "$4"',
+    "axiom", profile.workspace, credential, link, archive,
+  ], { signal });
+  if (probe.code !== 0) return "Codex could not confirm that its tool sandbox protects the credential and archive.";
 }
 
 /** Translate one already-staged benchmark attempt into a bounded codex exec invocation. */
@@ -101,9 +145,13 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       const workspace = await realpath(request.workspace);
       const artifactsRoot = resolve(options.artifacts);
       if (inside(workspace, artifactsRoot)) return result({ status: "blocked", reason: "Codex artifacts must remain outside the disposable workspace." });
+      const { authHome } = options;
+      if (authHome !== undefined && (!isAbsolute(authHome) || options.configToml !== undefined || options.environment !== undefined)) {
+        return result({ status: "blocked", reason: "Supply an absolute Codex auth home without provider or environment overrides." });
+      }
       scope = await mkdtemp(join(tmpdir(), "axiom-codex-profile-"));
       const profile: CodexProfile = {
-        program: options.program,
+        program: authHome ? await realpath(options.program) : options.program,
         home: join(scope, "codex"),
         userHome: join(scope, "home"),
         workspace,
@@ -115,6 +163,10 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       const native = await nativeVersion(profile, signal);
       if (native !== request.host.version) return result({ status: "blocked", reason: "Installed Codex does not match the requested version." });
       host = { ...request.host, version: native };
+      if (authHome) {
+        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal);
+        if (unavailable) return result({ status: "blocked", reason: unavailable });
+      }
       if (request.mode === "with_axiom") {
         const bundle = options.bundle;
         if (!bundle || bundle.policy.digest !== request.policy.digest) {
@@ -129,20 +181,22 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
         }
       }
       const execution = await runCodex(profile, [
-        "--ask-for-approval", "never", "exec", "--sandbox", "workspace-write", "--ephemeral",
+        "--ask-for-approval", "never", "exec", ...(authHome ? ["--ignore-rules"] : ["--sandbox", "workspace-write"]), "--ephemeral",
         "--skip-git-repo-check", "--color", "never", "--json", "--model", request.host.model, "-",
       ], { input: request.prompt, signal });
       const secrets = Object.entries(options.environment ?? {})
         .filter(([name]) => /(?:secret|token|key|password|auth)/i.test(name)).map(([, value]) => value);
       const trace = parseCodexTrace(execution.stdout, secrets);
       usage = trace.usage;
-      await mkdir(artifactsRoot, { recursive: true, mode: 0o700 });
-      const storage = await realpath(artifactsRoot);
-      if (inside(workspace, storage)) return result({ status: "blocked", reason: "Codex artifacts resolve into the disposable workspace." });
-      const location = `${request.id}.${randomUUID()}.json`;
-      const serialized = JSON.stringify({ actions: trace.actions }) + "\n";
-      await writeFile(join(storage, location), serialized, { flag: "wx", mode: 0o600 });
-      artifacts.push({ kind: "action-trace", location, digest: digest(serialized) });
+      if (!authHome) {
+        await mkdir(artifactsRoot, { recursive: true, mode: 0o700 });
+        const storage = await realpath(artifactsRoot);
+        if (inside(workspace, storage)) return result({ status: "blocked", reason: "Codex artifacts resolve into the disposable workspace." });
+        const location = `${request.id}.${randomUUID()}.json`;
+        const serialized = JSON.stringify({ actions: trace.actions }) + "\n";
+        await writeFile(join(storage, location), serialized, { flag: "wx", mode: 0o600 });
+        artifacts.push({ kind: "action-trace", location, digest: digest(serialized) });
+      }
       if (execution.code !== 0) return result({ status: "blocked", reason: "The native Codex CLI exited before completing the attempt." });
       return result(trace.outcome);
     } catch {
