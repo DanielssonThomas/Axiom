@@ -79,12 +79,20 @@ Run `node packages/cli/dist/index.js <command>` after `pnpm build`. The CLI reco
 - `check`: run applicable deterministic checks and selected repository-native verification, with evidence for the assessed scope.
 - `benchmark`: execute versioned behavioral cases through actual host backends; the requested `--benchmark <agent>` form is an alias.
 
-Both benchmark forms emit the same result with `command: "benchmark"` and the requested `agent` identifier. Every invocation emits one JSON object to stdout.
+Pass `--request /absolute/path/to/request.mjs` after the command arguments. This explicit path loads executable operator configuration. Keep the module outside the evaluated agent's control and use a module you trust. The module exports the requested operation as a named export.
+
+| Export | Inputs |
+| --- | --- |
+| `doctor` | A `DoctorRequest` with its root, catalog and native configuration snapshot. Supply observations collected for the current installed files and host session. |
+| `check` | An absolute repository root, a shared task brief, authoritative verification requirements, and an absolute `evidenceDirectory`. Supply `capabilities` and `host` when they are independently available. |
+| `benchmark` | `BenchmarkOptions` using an absolute `evidenceDirectory` in place of `store`. The trusted operator supplies the approved grader and an isolation provider that invokes the requested native adapter. Keep graders, credentials and evidence out of the agent-accessible workspace. |
+
+Both benchmark forms use the same operation, emit `command: "benchmark"`, and identify the requested `agent`. Fixture runtimes can produce diagnostic benchmark reports. A successful CLI disposition requires isolated native execution and observed required evidence for every attempt. Benchmark commands can return fresh run IDs and timings. Every invocation emits one JSON object to stdout.
 
 | Exit code | JSON output |
 | --- | --- |
 | `0` | Reserved for successful execution with `status: "passed"`. |
-| `1` | Unsuccessful operation. The skeleton emits `command`, `status: "not_run"`, and `reason`, plus `agent` for benchmark. |
+| `1` | Incomplete or unsuccessful operation with a canonical status and reason. Available evidence is included in the operation report. |
 | `2` | Invalid invocation. The object includes `status: "failed"` and a usage `reason`. |
 
 Unsupported capabilities produce explicit gaps. Installation alone does not establish instruction activation, successful skill triggering, or enforcement.

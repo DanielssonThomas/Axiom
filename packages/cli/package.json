@@ -8,6 +8,10 @@
   },
   "files": ["dist/*.js"],
   "dependencies": {
-    "@axiom/contracts": "workspace:*"
+    "@axiom/benchmark": "workspace:*",
+    "@axiom/contracts": "workspace:*",
+    "@axiom/doctor": "workspace:*",
+    "@axiom/evidence": "workspace:*",
+    "@axiom/verification": "workspace:*"
   }
 }

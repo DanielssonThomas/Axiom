@@ -87,9 +87,21 @@ importers:
 
   packages/cli:
     dependencies:
+      '@axiom/benchmark':
+        specifier: workspace:*
+        version: link:../benchmark
       '@axiom/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@axiom/doctor':
+        specifier: workspace:*
+        version: link:../doctor
+      '@axiom/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@axiom/verification':
+        specifier: workspace:*
+        version: link:../verification
 
   packages/contracts:
     dependencies:
