@@ -15,6 +15,7 @@ export const standardQualification = {
 export interface ArchiveOptions {
   repository: string;
   evidenceDirectory?: string;
+  baselineRef?: string;
   caseIds?: readonly string[];
   timeoutSeconds: number;
   repetitions: number;

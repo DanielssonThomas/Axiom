@@ -23,7 +23,6 @@ export interface StandardBenchmarkOptions extends ArchiveOptions {
   authHome?: string;
   program?: string;
   model?: string;
-  baselineRef?: string;
 }
 
 const unknownUsage: Usage = {
