@@ -39,7 +39,7 @@ function admit(raw: unknown, outputLimit: number): Record<string, unknown> | und
 }
 
 function meter(text: string) {
-  let input: number | undefined;
+  let input: number[] | undefined;
   let output: number | undefined;
   let stopped = false;
   for (const line of text.split(/\r?\n/)) {
@@ -52,16 +52,23 @@ function meter(text: string) {
       const usage = object(message.usage);
       const counts = [usage.input_tokens, usage.cache_creation_input_tokens ?? 0, usage.cache_read_input_tokens ?? 0];
       if (message.model !== benchmarkModel || !counts.every(tokens)) return;
-      input = counts.reduce((total, amount) => total + amount, 0);
+      input = counts;
     } else if (event.type === "message_delta") {
-      const count = object(event.usage).output_tokens;
-      if (!tokens(count) || count < (output ?? 0)) return;
-      output = count;
+      const previous = input;
+      if (!previous) return;
+      const usage = object(event.usage);
+      const counts = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens]
+        .map((count, index) => count ?? previous[index]);
+      if (!counts.every(tokens) || counts.some((count, index) => count < previous[index]!)) return;
+      if (!tokens(usage.output_tokens) || usage.output_tokens < (output ?? 0)) return;
+      input = counts;
+      output = usage.output_tokens;
     } else if (event.type === "message_stop") {
       stopped = true;
     }
   }
-  if (stopped && tokens(input) && tokens(output)) return { input, output };
+  const total = input?.reduce((sum, amount) => sum + amount, 0);
+  if (stopped && tokens(total) && tokens(output)) return { input: total, output };
 }
 
 export async function openProviderBudget(

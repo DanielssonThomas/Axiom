@@ -10,7 +10,8 @@ function completion(input: number, output: number, cacheRead = 0) {
     { type: "message_start", message: { model: benchmarkModel, usage: {
       input_tokens: input, output_tokens: 0, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0,
     } } },
-    { type: "message_delta", usage: { output_tokens: output } },
+    { type: "message_delta", usage: { input_tokens: input + 1, cache_read_input_tokens: cacheRead + 1,
+      cache_creation_input_tokens: null, output_tokens: output } },
     { type: "message_stop" },
   ].map((frame) => "data: " + JSON.stringify(frame) + "\n\n").join(""), {
     headers: { "content-type": "text/event-stream" },
@@ -45,7 +46,7 @@ test.runIf(process.platform === "linux")("admits only bounded Messages requests 
     expect(upstream).toHaveBeenCalledWith(expect.objectContaining({ model: benchmarkModel, max_tokens: 64 }), expect.any(AbortSignal));
     expect(upstream.mock.calls[0]?.[0]).not.toHaveProperty("context_management");
     expect(upstream.mock.calls[0]?.[0]).not.toHaveProperty("thinking");
-    expect(budget.usage()).toEqual({ metering: "reported", inputTokens: 30, outputTokens: 2 });
+    expect(budget.usage()).toEqual({ metering: "reported", inputTokens: 32, outputTokens: 2 });
     expect(await send(budget.socketPath, {})).toBe(200);
     expect(await send(budget.socketPath, {})).toBe(429);
     expect(upstream).toHaveBeenCalledTimes(2);
