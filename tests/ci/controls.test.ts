@@ -17,7 +17,7 @@ const env = {
 };
 const request = () => parseLiveInputs(env);
 const supported = { status: "passed" } as const;
-const owner = { event: "workflow_dispatch", ref: "refs/heads/main", actor: "owner", triggeringActor: "owner", owner: "owner" };
+const owner = { event: "workflow_dispatch", ref: "refs/heads/main", actor: "owner", triggeringActor: "untrusted-fixture", owner: "owner" };
 
 function workflow(file: string) {
   return parse(readFileSync(new URL(`.github/workflows/${file}`, repository), "utf8"));
