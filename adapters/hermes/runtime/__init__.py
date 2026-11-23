@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -35,26 +36,37 @@ def _description(skill):
     return YAML(typ="safe").load(frontmatter[0][4:])["description"]
 
 
-def _hook(bundle, folder):
+def _hook(bundle, folder, identity, checker_digest):
     def pre_tool_call(**kwargs):
-        node = os.environ.get("AXIOM_HERMES_NODE", "")
-        checker = os.environ.get("AXIOM_HERMES_CHECKER", "")
+        node = os.environ.get("AXIOM_HERMES_NODE") or shutil.which("node") or ""
+        checker = bundle / "checker.mjs"
         archive = os.environ.get("AXIOM_HERMES_ARCHIVE", str(folder / "evidence"))
-        reason = "Axiom's shared Hermes check is unavailable."
-        if Path(node).is_absolute() and Path(checker).is_absolute() and Path(archive).is_absolute():
+        session = str(kwargs.get("session_id") or "")
+        outcome = {"status": "blocked", "reason": "Axiom's shared Hermes check is unavailable."}
+        if Path(node).is_absolute() and Path(archive).is_absolute():
             try:
+                if checker.resolve() != checker or "sha256:" + hashlib.sha256(checker.read_bytes()).hexdigest() != checker_digest:
+                    raise ValueError("Installed Axiom checker differs from its bundle inventory.")
                 result = subprocess.run(
-                    [node, checker, str(bundle), archive, "pre-tool", str(kwargs.get("session_id") or "")],
+                    [node, str(checker), str(bundle), archive, "pre-tool", session],
                     stdin=subprocess.DEVNULL, capture_output=True, text=True,
                     timeout=1, check=True,
                 )
-                outcome = json.loads(result.stdout)
-                if outcome["status"] == "passed":
+                returned = json.loads(result.stdout)
+                if returned["status"] == "passed":
                     return None
-                reason = outcome.get("reason") or reason
-            except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+                if returned["status"] in ("failed", "blocked") and isinstance(returned["reason"], str):
+                    outcome = returned
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                 pass
-        return {"action": "block", "message": reason}
+        if SESSION_ID.fullmatch(session):
+            try:
+                _report(folder, f"pre-tool-{outcome['status']}-{session}.json", {
+                    "digest": identity, "session": session, "outcome": outcome,
+                })
+            except OSError:
+                return {"action": "block", "message": "Axiom's Hermes hook disposition could not be recorded."}
+        return {"action": "block", "message": outcome["reason"]}
 
     return pre_tool_call
 
@@ -88,6 +100,7 @@ def register(ctx):
         raise ValueError("Axiom requires installation in the selected named Hermes profile.")
     manifest = json.loads((bundle / "axiom-bundle.json").read_text(encoding="utf-8"))
     identity = manifest["digest"]
+    checker_digest = next(record["digest"] for record in manifest["files"] if record["path"] == "checker.mjs")
 
     folder = profile / ".axiom-hermes"
     if folder.exists() and folder.resolve() != folder:
@@ -127,6 +140,6 @@ def register(ctx):
             ctx.register_system_prompt_section(key, section, max_chars=SECTION_LIMIT)
             observation["sections"].append(
                 {"id": key, "digest": "sha256:" + hashlib.sha256(section.encode()).hexdigest()})
-    ctx.register_hook("pre_tool_call", _hook(bundle, folder))
+    ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, checker_digest))
     ctx.register_middleware("llm_request", _observe_request(folder, identity, frames, observation["sections"]))
     _report(folder, "registered.json", observation)

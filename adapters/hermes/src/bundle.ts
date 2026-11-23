@@ -28,6 +28,9 @@ export const hermesBundleAdapter: BundleAdapter = {
   }, {
     path: "__init__.py",
     text: readFileSync(new URL("../runtime/__init__.py", import.meta.url), "utf8"),
+  }, {
+    path: "checker.mjs",
+    text: readFileSync(new URL("../dist/checker.mjs", import.meta.url), "utf8"),
   }],
 };
 
@@ -58,7 +61,7 @@ export function readBundle(root: string): BundleManifest {
     inventory.add(item.path);
     digestSchema.parse(item.digest);
   }
-  for (const file of ["plugin.yaml", "__init__.py", "core/AXIOMS.md"]) {
+  for (const file of ["plugin.yaml", "__init__.py", "checker.mjs", "core/AXIOMS.md"]) {
     if (!inventory.has(file)) throw new Error(`The Hermes bundle is missing ${file}.`);
   }
   for (const { id } of metadata.skills) {

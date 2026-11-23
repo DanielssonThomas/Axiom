@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "axiom-hermes-backend-"));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "axiom-hermes-backend-")));
   workspaces.push(directory);
   const entrypoint = join(directory, "hermes-fixture.cjs");
   mkdirSync(join(directory, "profiles/eval"), { recursive: true });
@@ -85,7 +85,7 @@ test("cancels a running host and reports unavailable activation and bounded time
   const { backend, request, directory } = fixture();
   const abort = new AbortController();
   const running = backend.run({ ...request, prompt: "Wait for cancellation" }, abort.signal);
-  await vi.waitFor(() => expect(existsSync(join(directory, "client-started"))).toBe(true));
+  await vi.waitFor(() => expect(existsSync(join(directory, "client-started"))).toBe(true), { timeout: 3_000 });
   abort.abort();
   expect((await running).outcome).toMatchObject({ status: "blocked", reason: expect.stringContaining("cancel") });
   const owner = JSON.parse(readFileSync(join(directory, "gateway_state.json"), "utf8"));

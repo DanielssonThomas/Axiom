@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -130,6 +131,21 @@ test("installs into a newly created named profile before its first configuration
   expect(changeHermesPlugin(target, { kind: "install", bundle: bundle().directory }).outcome.status).toBe("passed");
   expect(readFileSync(direct, "utf8")).toContain("axiom");
   expect(readFileSync(join(target.home, "profiles/beta/config.yaml"), "utf8")).toBe(configuration);
+});
+
+test("installed check runtime is self-contained and blocks a session without loading evidence", () => {
+  const target = profiles();
+  const artifact = bundle();
+  const archive = temporary();
+  expect(changeHermesPlugin(target, { kind: "install", bundle: artifact.directory }).outcome.status).toBe("passed");
+  const directory = join(target.home, "profiles", "alpha", "plugins", "axiom");
+  const nativeCheck = spawnSync(process.execPath, [
+    join(directory, "checker.mjs"), directory, archive, "pre-tool", "unobserved-session",
+  ], { encoding: "utf8", cwd: archive, timeout: 5_000 });
+  expect(nativeCheck.status, nativeCheck.stderr).toBe(0);
+  expect(JSON.parse(nativeCheck.stdout)).toEqual({
+    status: "blocked", reason: "Required Axiom loading is absent in the current Hermes session.",
+  });
 });
 
 test("records a passing and intentionally failing native check and blocks unavailable worker or transition coverage", async () => {

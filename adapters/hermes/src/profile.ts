@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
-import { digestSchema } from "@axiom/contracts";
+import { digestSchema, evidenceOutcomeSchema } from "@axiom/contracts";
 import type { EvidenceOutcome, PolicyIdentity } from "@axiom/contracts";
 import { readBundle, verifyBundle } from "./bundle.js";
 
@@ -184,6 +184,7 @@ export interface HermesActivation {
   loaded: EvidenceOutcome;
   enabled: boolean;
   policy?: PolicyIdentity;
+  bundleDigest?: string;
 }
 
 interface Registration {
@@ -245,7 +246,7 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
     const disabled = blocked("Axiom is disabled in the selected Hermes profile.");
     const registered = enabled ? observedRegistration(profile, bundle.digest) : undefined;
     return {
-      installed: { status: "passed" }, policy: bundle.policy, enabled,
+      installed: { status: "passed" }, policy: bundle.policy, bundleDigest: bundle.digest, enabled,
       discoverable: !enabled ? disabled : registered ? { status: "passed" }
         : { status: "not_run", reason: "Hermes has not reported registration of this bundle." },
       loaded: !enabled ? disabled : observedLoad(profile, bundle.digest, registered, session),
@@ -253,5 +254,22 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
   } catch {
     const invalid = blocked("The selected Hermes profile or bundle could not be verified.");
     return { installed: invalid, discoverable: invalid, loaded: invalid, enabled: false };
+  }
+}
+
+/** Retain a native veto even when Hermes completes the conversation after a tool was blocked. */
+export function inspectHermesHookFailure(target: HermesProfile, packageDigest: string, session: string): EvidenceOutcome | undefined {
+  if (!/^[a-z0-9_-]{1,128}$/i.test(session)) return blocked("Hermes did not provide an inspectable session identity.");
+  const profile = profileDirectory(target);
+  for (const status of ["failed", "blocked"] as const) {
+    const path = join(profile, ".axiom-hermes", `pre-tool-${status}-${session}.json`);
+    if (!existsSync(path)) continue;
+    if (realpathSync(path) !== path) return blocked("The Hermes hook observation cannot be redirected.");
+    try {
+      const observed = JSON.parse(readFileSync(path, "utf8"));
+      const outcome = evidenceOutcomeSchema.parse(observed.outcome);
+      if (observed.digest === packageDigest && observed.session === session && outcome.status === status) return outcome;
+    } catch { /* Malformed observations must not permit success. */ }
+    return blocked("The Hermes hook observation could not be verified.");
   }
 }

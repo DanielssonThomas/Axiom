@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import { backendRequestSchema, backendResultSchema } from "@axiom/contracts";
 import type { BackendRequest, BackendResult, BenchmarkBackend, EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { hermesVersion } from "./bundle.js";
-import { inspectHermesActivation, profileDirectory } from "./profile.js";
+import { inspectHermesActivation, inspectHermesHookFailure, profileDirectory } from "./profile.js";
 import type { HermesProfile } from "./profile.js";
 import { openHermesGateway, runHermes } from "./process.js";
 
@@ -94,12 +93,14 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       const selected = profileDirectory(profile);
       const home = dirname(dirname(selected));
       const activation = inspectHermesActivation(profile);
+      const useAxiom = request.mode === "with_axiom";
+      const { bundleDigest } = activation;
       if (activation.installed.status === "blocked") return blocked("The Hermes profile activation could not be inspected.");
-      if (request.mode === "with_axiom" && (!activation.enabled || activation.policy?.digest !== request.policy.digest
+      if (useAxiom && (!bundleDigest || !activation.enabled || activation.policy?.digest !== request.policy.digest
         || activation.loaded.status === "blocked")) {
         return blocked("The requested Axiom activation is unavailable in the selected Hermes profile.");
       }
-      if (request.mode === "without_axiom" && activation.enabled) {
+      if (!useAxiom && activation.enabled) {
         return blocked("The baseline profile has Axiom enabled.");
       }
       const env = {
@@ -108,8 +109,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
         HOME: home, HERMES_HOME: home,
         HERMES_TUI_GATEWAY_URL: "",
         AXIOM_HERMES_NODE: process.execPath,
-        AXIOM_HERMES_CHECKER: fileURLToPath(new URL("./hook-entry.js", import.meta.url)),
-        AXIOM_HERMES_ARCHIVE: archiveDirectory,
+        AXIOM_HERMES_ARCHIVE: resolve(archiveDirectory),
       };
       const base = { executable, cwd, env, deadline, signal };
       const scope = [...this.options.arguments ?? [], "--profile", profile.profile];
@@ -163,9 +163,13 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       const artifact = await new EvidenceStore(archiveDirectory).artifact({ kind: "hermes-trace", path: "hermes/" + name });
       if (!artifact) return blocked("The normalized Hermes trace could not be archived.");
       const evidence = { host: request.host, artifacts: [artifact], usage: trace.usage };
-      if (returned.code !== 0) return result({ status: "failed", reason: "Hermes reported unsuccessful native execution." }, evidence);
       if (signal.aborted) return result({ status: "blocked", reason: "Hermes execution was cancelled." }, evidence);
-      if (request.mode === "with_axiom" && inspectHermesActivation(profile, trace.session).loaded.status !== "passed") {
+      if (useAxiom && bundleDigest) {
+        const hookFailure = inspectHermesHookFailure(profile, bundleDigest, trace.session);
+        if (hookFailure) return result(hookFailure, evidence);
+      }
+      if (returned.code !== 0) return result({ status: "failed", reason: "Hermes reported unsuccessful native execution." }, evidence);
+      if (useAxiom && inspectHermesActivation(profile, trace.session).loaded.status !== "passed") {
         return result({ status: "blocked", reason: "Hermes did not observe Axiom policy loading in the benchmark session." }, evidence);
       }
       return result({ status: "passed" }, evidence);
