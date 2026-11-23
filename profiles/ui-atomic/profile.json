@@ -1,0 +1,11 @@
+{
+  "id": "ui-atomic",
+  "version": "1",
+  "extends": [],
+  "principleIds": ["AX-02", "AX-03", "AX-04", "AX-05", "AX-07"],
+  "checks": [
+    { "id": "ui-atomic.composition", "required": true, "principleIds": ["AX-02", "AX-03", "AX-07"] },
+    { "id": "ui-atomic.reuse", "required": true, "principleIds": ["AX-02", "AX-07"] },
+    { "id": "ui-atomic.verification", "required": true, "principleIds": ["AX-04", "AX-05"] }
+  ]
+}

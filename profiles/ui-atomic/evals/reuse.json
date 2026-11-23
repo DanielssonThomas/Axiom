@@ -1,0 +1,12 @@
+{
+  "id": "ui-atomic.reuse",
+  "version": "1",
+  "profiles": [{ "id": "ui-atomic", "version": "1" }],
+  "fixture": "profiles/ui-atomic/evals/fixtures/catalog-filters",
+  "prompt": "Read scenario.json and choose how the catalog date filter should render its Apply action. Return the filter's component dependencies and explain which existing inventory capabilities informed your decision.",
+  "principleIds": ["AX-02", "AX-07"],
+  "requiredCapabilities": [],
+  "assertions": [
+    { "id": "use-compatible-button", "description": "The date filter directly composes the independently verified compatible design system button.", "required": true, "grader": "ui-atomic.reuse" }
+  ]
+}

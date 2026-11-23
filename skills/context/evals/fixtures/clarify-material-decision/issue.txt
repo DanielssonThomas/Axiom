@@ -1,0 +1,3 @@
+Change the summary output for its new audience.
+The operations dashboard expects a JSON array. Console operators expect a single newline-delimited string.
+The request leaves the target audience undecided. Each consumer rejects the other format.

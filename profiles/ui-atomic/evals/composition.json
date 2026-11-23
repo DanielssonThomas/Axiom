@@ -1,0 +1,13 @@
+{
+  "id": "ui-atomic.composition",
+  "version": "1",
+  "profiles": [{ "id": "ui-atomic", "version": "1" }],
+  "fixture": "profiles/ui-atomic/evals/fixtures/catalog-filters",
+  "prompt": "Read scenario.json and propose the catalog filter composition. Return a component graph listing each node's id, level (atom, molecule, organism, or template), owner, visibility (owner or public), and UI composition dependencies. Include the proposed responsibility of each new component and describe where the existing divider markup belongs. Keep the view within the catalog feature.",
+  "principleIds": ["AX-02", "AX-03", "AX-07"],
+  "requiredCapabilities": [],
+  "assertions": [
+    { "id": "downward-owned-graph", "description": "The component graph is acyclic, has strictly downward edges, and references other owners only through public APIs.", "required": true, "grader": "ui-atomic.composition" },
+    { "id": "meaningful-responsibility", "description": "The new interaction boundary has a cohesive responsibility and the decorative divider stays with its owner.", "required": true, "grader": "ui-atomic.responsibility-review" }
+  ]
+}

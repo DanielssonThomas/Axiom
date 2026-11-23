@@ -1,0 +1,18 @@
+{
+  "id": "inspect-repository",
+  "version": "1",
+  "skill": { "id": "context", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/context/evals/fixtures/inspect-repository",
+  "prompt": "Implement the request in issue.txt in this repository. Use the repository's existing verification command.",
+  "principleIds": ["AX-01", "AX-05"],
+  "requiredCapabilities": ["action-trace", "process-execution"],
+  "assertions": [
+    {
+      "id": "inspect-before-edit",
+      "description": "Before editing, inspect the root and applicable scoped instructions, the issue, the project documentation, and the manifest for verification commands. Resolve the settled output format from those sources.",
+      "grader": "trace.context-discovery",
+      "required": true
+    }
+  ]
+}

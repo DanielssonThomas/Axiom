@@ -1,0 +1,24 @@
+{
+  "id": "reuse-summary-formatter",
+  "version": "1",
+  "skill": { "id": "design", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/design/evals/fixtures/reuse-summary-formatter",
+  "prompt": "Implement the command behavior described in issue.txt.",
+  "principleIds": ["AX-02", "AX-03", "AX-07"],
+  "requiredCapabilities": [],
+  "assertions": [
+    {
+      "id": "reuse-formatter",
+      "description": "The command invokes the existing formatSummary function and preserves its returned text.",
+      "grader": "artifact.existing-formatter",
+      "required": true
+    },
+    {
+      "id": "keep-command-cohesive",
+      "description": "Changes stay in the existing command module. No forwarding modules or duplicate formatter are introduced.",
+      "grader": "artifact.command-boundary",
+      "required": true
+    }
+  ]
+}
