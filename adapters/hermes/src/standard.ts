@@ -14,7 +14,7 @@ interface AccountBackendOptions {
   archiveDirectory: string;
   bundle: string;
   /** Credential-free native loopback tests only. The user command never supplies this. */
-  loopback?: { url: string; observeOnly?: boolean };
+  loopback?: string;
 }
 
 const guard = fileURLToPath(new URL("../dist/standard-tool-guard.js", import.meta.url));
@@ -36,6 +36,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
     const remaining = () => Math.max(0, request.timeoutMs - (performance.now() - started));
     const env = { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, HERMES_DISABLE_AUTO_UPDATE: "1",
       HERMES_TUI_GATEWAY_URL: "", HERMES_WRITE_SAFE_ROOT: request.workspace,
+      HERMES_CODEX_BASE_URL: "https://chatgpt.com/backend-api/codex",
       ...(options.loopback && { OPENAI_API_KEY: "loopback-only" }) };
     const command = { executable: options.executable, cwd: request.workspace, env,
       deadline: started + request.timeoutMs, signal };
@@ -55,12 +56,9 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
         hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace].map((part) => JSON.stringify(part)).join(" "),
           timeout: 5, fail_closed: true }] },
       }), { mode: 0o600 });
-      if (!options.loopback || options.loopback.observeOnly) {
-        const auth = await runHermes({ ...command, args: ["--profile", profile, "auth", "status", provider] });
-        if (auth.code !== 0 || !/^openai-codex: logged in\s*$/m.test(auth.stdout)) {
-          return blocked("The disposable Hermes profile could not use the default profile’s OpenAI Codex login.");
-        }
-        if (options.loopback?.observeOnly) return blocked("Native account discovery succeeded; model execution was suppressed for the test.");
+      const auth = await runHermes({ ...command, args: ["--profile", profile, "auth", "status", provider] });
+      if (auth.code !== 0 || !/^openai-codex: logged in\s*$/m.test(auth.stdout)) {
+        return blocked("The disposable Hermes profile could not use the default profile’s OpenAI Codex login.");
       }
       if (request.mode === "with_axiom" && changeHermesPlugin({ home, profile }, { kind: "install", bundle: options.bundle }).outcome.status !== "passed") {
         return blocked("The disposable Hermes profile could not install the Axiom bundle.");
@@ -69,7 +67,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       const backend = new HermesBenchmarkBackend({
         executable: options.executable, profile: { home, profile }, archiveDirectory: options.archiveDirectory,
         provider: options.loopback ? "custom" : provider, maxTurns: 8, standalone: true, toolsets: ["file", "skills"], environment: env,
-        ...(options.loopback && { baseUrl: options.loopback.url }),
+        ...(options.loopback && { baseUrl: options.loopback }),
       });
       return await backend.run({ ...request, timeoutMs: Math.floor(remaining()) }, signal);
     } catch {

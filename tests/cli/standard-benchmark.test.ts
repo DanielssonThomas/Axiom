@@ -2,8 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { loadBundleWorkspace } from "@axiom/bundles";
-import { assembleBundles, writeBundles } from "../../packages/bundles/src/index.js";
+import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../packages/bundles/src/index.js";
 import { createHermesAccountBackend } from "../../adapters/hermes/src/standard.js";
 import { hermesBundleAdapter, hermesVersion } from "../../adapters/hermes/src/bundle.js";
 import { reviewNativeBenchmark } from "../../packages/cli/src/benchmark-review.js";
@@ -62,7 +61,10 @@ test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mo
   const root = await mkdtemp(join(tmpdir(), "axiom-hermes-account-"));
   const home = join(root, "auth");
   const canary = join(root, "private.txt");
-  const credentials = '{"fixture":"opaque dummy native auth store"}\n';
+  const credentials = JSON.stringify({ version: 1, credential_pool: {
+    "openai-codex": [{ id: "fixture", label: "Fixture login", auth_type: "oauth", priority: 0, source: "manual:device_code",
+      access_token: "opaque-dummy-native-oauth", refresh_token: "opaque-dummy-native-refresh" }],
+  } }) + "\n";
   const server = await openLoopback("hermes", host.model, ({ text, toolResults }) => {
     const observed = text.includes("# Axiom Core");
     const calls = [
@@ -90,7 +92,7 @@ test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mo
       }));
       return { policy: bundle!.manifest.policy, bundleDigest: bundle!.manifest.digest, backend: createHermesAccountBackend({
         executable: program!, authHome: home, archiveDirectory: archive.evidenceDirectory, bundle: bundle!.directory,
-        loopback: { url: server.endpoint + "/v1" },
+        loopback: server.endpoint + "/v1",
       }) };
     });
     expect(result, JSON.stringify(result)).toMatchObject({ outcome: { status: "passed" },
@@ -100,10 +102,11 @@ test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mo
     expect((await reviewNativeBenchmark(repository, result.report.evidenceDirectory, result.report.evidenceDigest)).outcome.status).toBe("passed");
     expect(server.requests.some(({ toolResults }) => toolResults.some((item) => item.includes("only inside its disposable fixture")))).toBe(true);
     expect(server.requests.every(({ text }) => !text.includes("Private default profile instruction.") &&
-      !text.includes("Private verifier canary content.") && !text.includes("opaque dummy native auth store"))).toBe(true);
+      !text.includes("Private verifier canary content.") && !text.includes("opaque-dummy-native-oauth"))).toBe(true);
     expect(await readFile(canary, "utf8")).toBe("Private verifier canary content.");
     expect(await readFile(join(home, "auth.json"), "utf8")).toBe(credentials);
     expect(await readFile(join(home, "config.yaml"), "utf8")).toBe("gateway:\n  multiplex: true\n");
+    await expect(readFile(join(home, "gateway_state.json"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await server.close();
     await rm(root, { recursive: true, force: true });
