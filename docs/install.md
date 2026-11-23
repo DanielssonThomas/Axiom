@@ -18,6 +18,15 @@ The build stages native Claude and Codex marketplaces and a local Git repository
 
 The assembler selects canonical runtime files and excludes evaluations, graders, credentials, and run outputs. Claude and Hermes use the shared runtime inventory in `axiom-bundle.json`, and the Codex distribution pins its file inventory by digest. A repeat build from the same reviewed inputs produces the same distribution manifest and Hermes commit.
 
+For the experimental development distribution, use an empty output path and select the profile explicitly.
+
+```sh
+AXIOM_DIST="$PWD/dist/axiom-0.1.0-praxis.1"
+node packages/cli/dist/index.js bundle --out "$AXIOM_DIST" --version 0.1.0-praxis.1 --profile angular-nx
+```
+
+This version is intended for early Praxis development with Angular/Nx and inherited atomic UI policy. Use the native installation commands below with its staged directory and manifest. Its qualification status is experimental.
+
 ## Claude Code
 
 Use Claude Code **2.1.330** and Node.js 24 on `PATH` for the installed hook. Run `claude --version` before installing. From the intended project, select `local` for that project's personal settings, `project` for shared project settings, or `user` for a user-wide installation. [Claude Code plugin CLI reference](https://code.claude.com/docs/en/plugins/cli-reference.md)
@@ -88,6 +97,38 @@ Record the artifact and policy digests, host version and surface, selected scope
 
 ## Run a local behavioral benchmark
 
+### Standard mode with an existing native login
+
+Build from a clean reviewed checkout on Linux. Authorize the named host to use your account and its available quota with `--allow-native`. Native plan charges and usage limits are controlled by the host account. The standard mode requires no separate API key.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+node packages/cli/dist/index.js benchmark codex --mode standard --allow-native
+node packages/cli/dist/index.js benchmark hermes --mode standard --allow-native
+node packages/cli/dist/index.js benchmark claude --mode standard --allow-native
+```
+
+| Host | Native account route |
+| --- | --- |
+| Codex 0.172.0-alpha.2 | Use an existing ChatGPT login in Codex's file credential store. The runner lets Codex share and refresh the native login through a link in a disposable home. Its named tool sandbox guards that store and the evidence archive. If the current login exists only in an OS keyring, use a dedicated native benchmark home. |
+| Hermes 0.23.3 | Use `hermes --profile default auth status openai-codex`. The runner creates a temporary named standalone profile for each attempt, reuses the default profile's OpenAI Codex OAuth through Hermes' native fallback, and removes its own profile after use. The foreground gateway belongs to that temporary profile. To sign in first, use `hermes --profile default auth add openai-codex --browser`. |
+| Claude Code 2.1.330 | Use an existing first-party Claude subscription login visible to `claude auth status`. The runner uses restricted file and skill tools with the native session-only plugin in the Axiom arm. |
+
+For a dedicated Codex login, use the ordinary device login once, then keep using that home.
+
+```sh
+mkdir -p "$HOME/.codex-axiom"
+CODEX_HOME="$HOME/.codex-axiom" codex -c 'cli_auth_credentials_store="file"' login --device-auth
+node packages/cli/dist/index.js benchmark codex --mode standard --allow-native --auth-home "$HOME/.codex-axiom"
+```
+
+The default runs two serial attempts of `reuse-summary-formatter`, with and without Axiom. The time limit defaults to 120 seconds. Use `--timeout-seconds`, `--repetitions`, and `--max-attempts` to bound the plan. Ctrl+C cancels the run. Use `--program` to locate the pinned CLI, `--model` for an exact account-supported identifier, or `--auth-home` to select the native credential store. Codex and Hermes default to `gpt-5.4`. Claude defaults to `claude-haiku-4-5-20251001`. Codex records its requested identifier. Hermes and Claude check the model reported by the native stream.
+
+The standard report retains available attempt counters and records aggregate usage as unknown and hard-budget enforcement as unavailable. Release qualification stays blocked, including when the behavioral grade passes. This case independently grades the delivered workspace using the canonical reuse and change-boundary assertions. Clarification, browser verification, profile application, and delegated-worker cases need additional observation channels. The runner rejects unsupported cases before model execution. [Claude authentication](https://code.claude.com/docs/en/authentication) · [Codex login](https://developers.openai.com/codex/auth) · [Hermes profile credentials](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/website/docs/user-guide/profiles.md#credential-sharing)
+
+### Strict mode with an independently enforced token budget
+
 Run the built-in Claude Code 2.1.330 benchmark on Linux with Bubblewrap at `/usr/bin/bwrap` and working unprivileged namespaces. Use a clean reviewed checkout, the frozen lockfile, and freshly built grader and CLI outputs. If reusing a checkout across revisions, use `pnpm exec tsc --build tsconfig.build.json --force` before `pnpm build` to regenerate the JavaScript. Use an existing authorized Anthropic API key in the trusted operator environment as `ANTHROPIC_API_KEY`. The runner uses that key only for the official Anthropic endpoint. The native process receives a disposable profile and a placeholder key for the local broker.
 
 ```sh
@@ -98,7 +139,7 @@ The default runs one paired trial of `reuse-summary-formatter` on Claude Haiku 4
 
 Use `--program /absolute/path/to/claude` for a binary outside `PATH`. Choose a reviewed commit via `--baseline FULL_SHA` or use the current commit. To run both supported cases, add `--case reuse-summary-formatter --case report-unavailable-preview`. The second case checks whether the model accurately records that the isolated browser preview is unavailable. Adjust `--token-budget`, `--max-output-tokens`, `--timeout-seconds`, and `--repetitions` when authorizing the run. The runner rejects cases that require a missing observation channel, such as clarification, actual browser interaction, or worker delivery, before it makes a provider call.
 
-Existing native authentication can run ordinary native sessions. Use `claude auth status`, `codex login status`, or `hermes --profile NAME auth list openai-codex` to inspect the corresponding supported login. Native Claude subscription login, Codex ChatGPT login, and the pinned Hermes OpenAI Codex OAuth provider are official options. Their native routes lack an independently verified pre-call token cap in Axiom. Codex and Hermes parent terminal usage also omits observed worker usage. The current qualifying-budget route requires the Anthropic API key described above. [Claude authentication](https://code.claude.com/docs/en/authentication) · [Codex login](https://developers.openai.com/codex/auth) · [Hermes providers](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/website/docs/integrations/providers.md#openai-codex--chatgpt-subscription)
+### Review the saved evidence
 
 The CLI prints the private `evidenceDirectory` and the summary's `evidenceDigest`. Retain that digest separately. The directory defaults to a new subdirectory of `.axiom/runs`. Inspect `benchmark.json`, the saved grading observations, and the `acceptance/` evidence records. To replay the independent graders locally, use the clean source revision recorded in the summary and matching freshly built grader outputs. Supply the printed directory and digest.
 

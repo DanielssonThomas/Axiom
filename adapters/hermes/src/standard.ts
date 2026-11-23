@@ -74,10 +74,12 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       return blocked("The disposable Hermes account attempt could not be staged or executed.");
     } finally {
       if (directory) {
-        const cleanup = await runHermes({ ...command, signal: new AbortController().signal, deadline: performance.now() + 5_000,
-          args: ["--profile", "default", "profile", "delete", profile, "--yes"] });
-        if (cleanup.code !== 0) {
+        if (signal.aborted || remaining() < 1) {
           await rm(directory, { recursive: true, force: true });
+        } else {
+          const cleanup = await runHermes({ ...command, deadline: performance.now() + 5_000,
+            args: ["--profile", "default", "profile", "delete", profile, "--yes"] });
+          if (cleanup.code !== 0) await rm(directory, { recursive: true, force: true });
         }
       }
     }

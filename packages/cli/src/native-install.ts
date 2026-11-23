@@ -181,7 +181,7 @@ Promise<NativeResult<{ host: "codex"; action: CodexLifecycle; version?: string }
     const userHome = resolve(options.userHome ?? homedir());
     const home = resolve(options.home ?? process.env.CODEX_HOME ?? join(userHome, ".codex"));
     await configureCodexProfile({ home, workspace: resolve(options.workspace ?? process.cwd()), userHome,
-      program: await nativeProgram("codex", options.program) }, action, bundle);
+      program: await nativeProgram("codex", options.program ? resolve(options.program) : undefined) }, action, bundle);
     return { outcome: { status: "passed" }, report: { host: "codex", action, ...(bundle ? { version: bundle.version } : {}) } };
   } catch (error) {
     return blocked(error);

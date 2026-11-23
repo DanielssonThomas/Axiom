@@ -54,6 +54,20 @@ test("records positive standard behavior separately from hard-budget and qualifi
     cancellation.abort();
     expect((await runStandardArchive(options, host, "injected", configure, cancellation.signal)).outcome.status).toBe("blocked");
     expect(configure).toHaveBeenCalledTimes(1);
+    const active = new AbortController();
+    const results = await runStandardArchive({ ...options, repetitions: 2 }, host, "injected", async (archive) => {
+      const { policy, bundleDigest } = await configure(archive);
+      return { policy, bundleDigest, backend: {
+        async run(request, signal) {
+          active.abort();
+          signal.throwIfAborted();
+          throw new Error(`Cancelled attempt ${request.id} was not stopped.`);
+        },
+      } };
+    }, active.signal);
+    expect(results).toMatchObject({ outcome: { status: "blocked" }, report: { report: { attempts: [
+      { outcome: { status: "blocked" } }, ...Array.from({ length: 3 }, () => ({ outcome: { status: "not_run" } })),
+    ] } } });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
