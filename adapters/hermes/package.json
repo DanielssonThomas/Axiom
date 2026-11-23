@@ -1,0 +1,21 @@
+{
+  "name": "@axiom/hermes-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist/*.js", "dist/*.d.ts", "dist/checker.mjs", "runtime/*.py"],
+  "scripts": {
+    "build:bridge": "rolldown --config bridge.config.mjs"
+  },
+  "devDependencies": {
+    "rolldown": "1.2.19"
+  },
+  "dependencies": {
+    "@axiom/bundles": "workspace:*",
+    "@axiom/contracts": "workspace:*",
+    "@axiom/evidence": "workspace:*",
+    "@axiom/policy": "workspace:*",
+    "yaml": "2.9.1"
+  }
+}

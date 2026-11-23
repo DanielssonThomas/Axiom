@@ -45,6 +45,28 @@ importers:
         specifier: workspace:*
         version: link:../../packages/policy
 
+  adapters/hermes:
+    dependencies:
+      '@axiom/bundles':
+        specifier: workspace:*
+        version: link:../../packages/bundles
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@axiom/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
+      '@axiom/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+    devDependencies:
+      rolldown:
+        specifier: 1.2.19
+        version: 1.2.19
+
   packages/benchmark:
     dependencies:
       '@axiom/contracts':

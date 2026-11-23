@@ -10,6 +10,7 @@
     { "path": "./packages/benchmark" },
     { "path": "./packages/bundles" },
     { "path": "./adapters/codex" },
-    { "path": "./adapters/claude" }
+    { "path": "./adapters/claude" },
+    { "path": "./adapters/hermes" }
   ]
 }
