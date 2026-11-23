@@ -19,7 +19,8 @@ function createWorkspace() {
   execFileSync("tar", ["-xf", "-", "-C", repository], { input: reviewed, timeout: 10_000 });
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
   git("init", "-q");
-  git("-c", "core.autocrlf=false", "add", ".");
+  git("config", "--local", "core.autocrlf", "false");
+  git("add", ".");
   git("-c", "user.name=Axiom Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgSign=false",
     "commit", "-qm", "Reviewed fixture source");
   return { repository, root, revision: git("rev-parse", "HEAD") };

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { devNull, homedir } from "node:os";
+import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -44,7 +44,8 @@ async function readJson(file: string | URL) {
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const environment = {
-    PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull,
+    // Git treats the empty global path as missing. Node's Windows null-device path is not a Git config file.
+    PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "",
     GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_NAME: "Axiom", GIT_AUTHOR_EMAIL: "bundle@axiom.invalid",
     GIT_COMMITTER_NAME: "Axiom", GIT_COMMITTER_EMAIL: "bundle@axiom.invalid", GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
     GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
