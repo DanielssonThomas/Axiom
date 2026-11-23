@@ -1,6 +1,6 @@
 # Axiom bundle installation
 
-The workspace builds three native-layout fixtures for packaging and lifecycle tests. Verify the installed release and supported host versions against the integration evidence from [#19](https://github.com/DanielssonThomas/Axiom/issues/19) before installing in a working profile. The fixture manifests identify themselves as fixtures. They exercise packaging without asserting policy activation, skill behavior, or lifecycle enforcement.
+The workspace builds three native-layout fixtures for packaging and lifecycle tests. Their manifests set `fixture: true`. Before installing a release in a working profile, verify the artifact and your host version against the [compatibility matrix](compatibility.md).
 
 ## Build and inspect
 
@@ -40,18 +40,21 @@ After a newer version is available at the configured source, run `codex plugin a
 
 ## Hermes Agent
 
-These commands follow Hermes Agent v0.23.3. Select the profile explicitly for every operation. Use a Git release source containing the Hermes artifact at its root, or place the artifact in a disposable Git repository for a local test. Replace `/absolute/path/to/hermes-release` with that repository and use its version tag. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
+These commands use Hermes Agent 0.23.3 and a named profile. The installed shared checker uses Node.js 24 on the host's `PATH`. For a disposable Git test, place the assembled native Hermes artifact at the Git repository root. Set `HERMES_RELEASE_URL` to that repository's `file://` URL and set `INITIAL_COMMIT_SHA` and `UPDATE_COMMIT_SHA` to the full 40-character commit SHAs for the reviewed artifacts. Hermes's package manager may provision its pinned Python runtime during installation. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
 ```sh
-hermes --profile axiom-test plugins install file:///absolute/path/to/hermes-release --ref v0.1.0
+export HERMES_HOME=/absolute/path/to/disposable-hermes-home
+hermes profile create axiom-test --no-alias --no-credentials
+hermes --profile axiom-test plugins install "$HERMES_RELEASE_URL" --ref "$INITIAL_COMMIT_SHA" --no-enable
 hermes --profile axiom-test plugins enable axiom
-hermes --profile axiom-test plugins install file:///absolute/path/to/hermes-release --force --ref v0.2.0
+hermes --profile axiom-test plugins list --user --json
+hermes --profile axiom-test plugins install "$HERMES_RELEASE_URL" --force --ref "$UPDATE_COMMIT_SHA" --enable
 hermes --profile axiom-test plugins disable axiom
 hermes --profile axiom-test plugins remove axiom
 ```
 
-The second install explicitly selects a new version for a pinned source. An unpinned Git install uses `hermes --profile axiom-test plugins update axiom` to follow its configured origin. Start a new session in the selected profile after changing plugin state. Verify the selected profile's installed files and actual loading independently from discovery. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
+The second install moves the source pin to the reviewed update. Start a new session in the selected profile after changing plugin state. Check the native inventory, then verify policy loading and a skill call in that session. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
 ## Verify the result
 
-Record the artifact digest, host version and surface, selected scope or profile, and any missing capabilities. Install, update, disable, and uninstall evidence in this branch comes from fixture configuration. Final native installation, activation, and ordinary-session behavior require the integration matrix.
+Record the artifact and policy digests, host version and surface, selected scope or profile, and native observations. Use the [compatibility matrix](compatibility.md) to check the tested configurations and qualification gaps.
