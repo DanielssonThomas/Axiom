@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, test } from "vitest";
 import type { TaskBrief } from "@axiom/contracts";
 import {
@@ -60,8 +61,12 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
     expect(await readFile(join(workspace, "AGENTS.md"), "utf8")).toBe(projectText);
 
     let requests = 0;
-    let workerMessage: string | undefined;
-    let spawnCall: string | undefined;
+    let trial: {
+      message: string;
+      parentId?: string;
+      childRequest: Promise<void>;
+      finishChildRequest: (() => void) | undefined;
+    } | undefined;
     const providerRequests: CodexProviderObservation[] = [];
     const server = createServer(async (incoming, outgoing) => {
       try {
@@ -74,24 +79,29 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
         for await (const chunk of incoming) chunks.push(chunk);
         const body = JSON.parse(Buffer.concat(chunks).toString());
         providerRequests.push({ turnMetadata: incoming.headers["x-codex-turn-metadata"], body });
+        const metadata = JSON.parse(String(incoming.headers["x-codex-turn-metadata"] ?? "{}"));
         requests += 1;
         const id = `msg-fixture-${requests}`;
         let action: { name: string; call_id: string; arguments: string } | undefined;
-        if (workerMessage !== undefined) {
-          spawnCall = `call-worker-${requests}`;
-          action = { name: "spawn_agent", call_id: spawnCall, arguments: JSON.stringify({ message: workerMessage, fork_context: false }) };
-          workerMessage = undefined;
-        } else if (spawnCall) {
-          const spawnResult = body.input?.find((item: { type: string; call_id?: string }) =>
-            item.type === "function_call_output" && item.call_id === spawnCall);
-          if (spawnResult) {
-            const { agent_id } = JSON.parse(spawnResult.output);
-            if (typeof agent_id !== "string") throw new Error("Missing native Codex worker ID.");
+        const currentTrial = trial;
+        if (currentTrial && typeof metadata.thread_id === "string") {
+          if (currentTrial.parentId === undefined && metadata.thread_source !== "subagent") {
+            currentTrial.parentId = metadata.thread_id;
             action = {
-              name: "wait_agent", call_id: `call-wait-${requests}`,
-              arguments: JSON.stringify({ targets: [agent_id], timeout_ms: 5000 }),
+              name: "spawn_agent", call_id: `call-worker-${requests}`,
+              arguments: JSON.stringify({ message: currentTrial.message, fork_context: false }),
             };
-            spawnCall = undefined;
+          } else if (metadata.thread_id === currentTrial.parentId) {
+            // Keep the parent alive until the real child's provider request is observed.
+            const deadline = new AbortController();
+            try {
+              await Promise.race([
+                currentTrial.childRequest,
+                delay(6000, undefined, { signal: deadline.signal }).then(() => { throw new Error("No native child request."); }),
+              ]);
+            } finally {
+              deadline.abort();
+            }
           }
         }
         const message = action === undefined ? {
@@ -108,6 +118,9 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
         ];
         outgoing.writeHead(200, { "Content-Type": "text/event-stream" });
         outgoing.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+        if (currentTrial && metadata.thread_source === "subagent" && metadata.parent_thread_id === currentTrial.parentId) {
+          currentTrial.finishChildRequest?.();
+        }
       } catch { outgoing.writeHead(400).end(); }
     });
     await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
@@ -143,13 +156,14 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
       };
       const delegate = async (message: string) => {
         providerRequests.length = 0;
-        workerMessage = message;
+        let finishChildRequest: (() => void) | undefined;
+        const childRequest = new Promise<void>((resolve) => { finishChildRequest = resolve; });
+        trial = { message, childRequest, finishChildRequest };
         const run = await runCodex(profile, [
           "--ask-for-approval", "never", "exec", "--sandbox", "read-only", "--ephemeral",
           "--skip-git-repo-check", "--color", "never", "--json", "--model", host.model, "-",
         ], { input: "Launch one read-only worker.", signal: AbortSignal.timeout(10_000) });
         expect(run.code).toBe(0);
-        expect(spawnCall).toBeUndefined();
         expect(parseCodexTrace(run.stdout).usage).toMatchObject({ metering: "unknown", reason: expect.stringMatching(/worker/i) });
         return assessCodexActivation({
           ...observation, bundle: later, host, catalog, observations: [], requiredCapabilities: ["delegation"],
