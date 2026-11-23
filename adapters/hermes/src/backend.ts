@@ -169,8 +169,11 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
         if (hookFailure) return result(hookFailure, evidence);
       }
       if (returned.code !== 0) return result({ status: "failed", reason: "Hermes reported unsuccessful native execution." }, evidence);
-      if (useAxiom && inspectHermesActivation(profile, trace.session).loaded.status !== "passed") {
-        return result({ status: "blocked", reason: "Hermes did not observe Axiom policy loading in the benchmark session." }, evidence);
+      if (useAxiom) {
+        const observed = inspectHermesActivation(profile, trace.session);
+        if (observed.bundleDigest !== bundleDigest || observed.loaded.status !== "passed") {
+          return result({ status: "blocked", reason: "Hermes did not observe Axiom policy loading in the benchmark session." }, evidence);
+        }
       }
       return result({ status: "passed" }, evidence);
     } catch {

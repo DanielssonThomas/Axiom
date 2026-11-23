@@ -184,6 +184,11 @@ test.runIf(executable)("loads and uses an installed skill in an ordinary session
       JSON.parse(await readFile(join(archive, "acceptance", name), "utf8")).outcome,
     ));
     expect(outcomes).toContainEqual({ status: "failed", reason: expect.stringContaining("core/AXIOMS.md") });
+    expect(adapter.changeHermesPlugin(profile, { kind: "uninstall" }).outcome.status).toBe("passed");
+    expect(adapter.changeHermesPlugin(profile, { kind: "install", bundle: artifact!.directory }).outcome.status).toBe("passed");
+    expect(adapter.inspectHermesActivation(profile, trace.session)).toMatchObject({
+      installed: { status: "passed" }, discoverable: { status: "not_run" }, loaded: { status: "not_run" },
+    });
   } finally {
     server.closeAllConnections();
     server.close();

@@ -188,20 +188,34 @@ export interface HermesActivation {
 }
 
 interface Registration {
+  instance: string;
   sections: { id: string; digest: string }[];
   missingReason?: string;
 }
 
-function observedRegistration(profile: string, packageDigest: string): Registration | undefined {
+function currentInstallation(directory: string): string | undefined {
+  const path = join(directory, ".axiom-install-instance");
+  if (!existsSync(path)) return;
+  if (realpathSync(path) !== path) throw new Error("The Hermes installation identity cannot be redirected.");
+  const instance = JSON.parse(readFileSync(path, "utf8"));
+  if (typeof instance !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(instance)) {
+    throw new Error("The Hermes installation identity is malformed.");
+  }
+  return instance;
+}
+
+function observedRegistration(profile: string, packageDigest: string, instance: string): Registration | undefined {
   const path = join(profile, ".axiom-hermes", "registered.json");
   if (!existsSync(path)) return;
   if (realpathSync(path) !== path) throw new Error("Hermes registration observation cannot be redirected.");
   const observation = JSON.parse(readFileSync(path, "utf8"));
-  if (observation.digest !== packageDigest || observation.stage !== "registered" || !Array.isArray(observation.sections)) return;
+  if (observation.digest !== packageDigest || observation.instance !== instance || observation.stage !== "registered"
+    || !Array.isArray(observation.sections)) return;
   for (const section of observation.sections) {
     if (!/^axiom\.policy-\d{3}$/.test(section?.id) || !digestSchema.safeParse(section?.digest).success) return;
   }
   return {
+    instance,
     sections: observation.sections,
     ...(typeof observation.missingReason === "string" && { missingReason: observation.missingReason }),
   };
@@ -220,6 +234,7 @@ function observedLoad(
     const observation = JSON.parse(readFileSync(path, "utf8"));
     if (observation.stage === "loaded" && observation.mechanism === "llm_request"
       && observation.digest === packageDigest && observation.session === session
+      && observation.instance === registration.instance
       && Array.isArray(observation.sections) && registration.sections.length > 0
       && observation.sections.length === registration.sections.length
       && registration.sections.every((section, index) =>
@@ -244,7 +259,8 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
     verifyBundle(installed, bundle);
     const enabled = configured(doc, "enabled") && !configured(doc, "disabled");
     const disabled = blocked("Axiom is disabled in the selected Hermes profile.");
-    const registered = enabled ? observedRegistration(profile, bundle.digest) : undefined;
+    const instance = enabled ? currentInstallation(installed) : undefined;
+    const registered = instance ? observedRegistration(profile, bundle.digest, instance) : undefined;
     return {
       installed: { status: "passed" }, policy: bundle.policy, bundleDigest: bundle.digest, enabled,
       discoverable: !enabled ? disabled : registered ? { status: "passed" }
@@ -261,6 +277,7 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
 export function inspectHermesHookFailure(target: HermesProfile, packageDigest: string, session: string): EvidenceOutcome | undefined {
   if (!/^[a-z0-9_-]{1,128}$/i.test(session)) return blocked("Hermes did not provide an inspectable session identity.");
   const profile = profileDirectory(target);
+  const instance = currentInstallation(join(profile, "plugins", pluginName));
   for (const status of ["failed", "blocked"] as const) {
     const path = join(profile, ".axiom-hermes", `pre-tool-${status}-${session}.json`);
     if (!existsSync(path)) continue;
@@ -268,7 +285,8 @@ export function inspectHermesHookFailure(target: HermesProfile, packageDigest: s
     try {
       const observed = JSON.parse(readFileSync(path, "utf8"));
       const outcome = evidenceOutcomeSchema.parse(observed.outcome);
-      if (observed.digest === packageDigest && observed.session === session && outcome.status === status) return outcome;
+      if (instance && observed.digest === packageDigest && observed.instance === instance
+        && observed.session === session && outcome.status === status) return outcome;
     } catch { /* Malformed observations must not permit success. */ }
     return blocked("The Hermes hook observation could not be verified.");
   }

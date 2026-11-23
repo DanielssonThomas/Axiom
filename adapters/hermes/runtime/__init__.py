@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from uuid import uuid4
 
 from ruamel.yaml import YAML
 from hermes_constants import get_hermes_home
@@ -18,13 +19,16 @@ SESSION_LIMIT = 8000
 SESSION_ID = re.compile(r"[a-zA-Z0-9_-]{1,128}")
 
 
-def _report(folder, filename, observation):
+def _report(folder, filename, observation, *, replace=True):
     folder.mkdir(mode=0o700, exist_ok=True)
     descriptor, staged = tempfile.mkstemp(dir=folder)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as out:
             json.dump(observation, out)
-        os.replace(staged, folder / filename)
+        if replace:
+            os.replace(staged, folder / filename)
+        else:
+            os.link(staged, folder / filename)
     finally:
         Path(staged).unlink(missing_ok=True)
 
@@ -36,7 +40,19 @@ def _description(skill):
     return YAML(typ="safe").load(frontmatter[0][4:])["description"]
 
 
-def _hook(bundle, folder, identity, checker_digest):
+def _installation(bundle):
+    path = bundle / ".axiom-install-instance"
+    if not path.exists():
+        try:
+            _report(bundle, path.name, str(uuid4()), replace=False)
+        except FileExistsError:
+            pass
+    if path.resolve() != path:
+        raise ValueError("Axiom installation identity cannot be redirected.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _hook(bundle, folder, identity, instance, checker_digest):
     def pre_tool_call(**kwargs):
         node = os.environ.get("AXIOM_HERMES_NODE") or shutil.which("node") or ""
         checker = bundle / "checker.mjs"
@@ -62,7 +78,7 @@ def _hook(bundle, folder, identity, checker_digest):
         if SESSION_ID.fullmatch(session):
             try:
                 _report(folder, f"pre-tool-{outcome['status']}-{session}.json", {
-                    "digest": identity, "session": session, "outcome": outcome,
+                    "digest": identity, "instance": instance, "session": session, "outcome": outcome,
                 })
             except OSError:
                 return {"action": "block", "message": "Axiom's Hermes hook disposition could not be recorded."}
@@ -71,7 +87,7 @@ def _hook(bundle, folder, identity, checker_digest):
     return pre_tool_call
 
 
-def _observe_request(folder, identity, frames, fingerprints):
+def _observe_request(folder, identity, instance, frames, fingerprints):
     def observe(request, session_id="", **_kwargs):
         if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
             return
@@ -85,6 +101,7 @@ def _observe_request(folder, identity, frames, fingerprints):
         _report(folder, "loaded-" + session_id + ".json", {
             "stage": "loaded" if covered else "incomplete",
             "digest": identity,
+            "instance": instance,
             "session": session_id,
             "mechanism": "llm_request",
             "sections": fingerprints if covered else [],
@@ -100,6 +117,7 @@ def register(ctx):
         raise ValueError("Axiom requires installation in the selected named Hermes profile.")
     manifest = json.loads((bundle / "axiom-bundle.json").read_text(encoding="utf-8"))
     identity = manifest["digest"]
+    instance = _installation(bundle)
     checker_digest = next(record["digest"] for record in manifest["files"] if record["path"] == "checker.mjs")
 
     folder = profile / ".axiom-hermes"
@@ -125,7 +143,7 @@ def register(ctx):
         sections.append(content[:end].strip())
         content = content[end:].lstrip()
 
-    observation = {"stage": "registered", "digest": identity, "sections": []}
+    observation = {"stage": "registered", "digest": identity, "instance": instance, "sections": []}
     frames = [
         f"## Plugin Context: axiom.policy-{index:03}\n<!-- hermes-plugin-section-chars:{len(section)} -->\n\n{section}"
         for index, section in enumerate(sections)
@@ -140,6 +158,6 @@ def register(ctx):
             ctx.register_system_prompt_section(key, section, max_chars=SECTION_LIMIT)
             observation["sections"].append(
                 {"id": key, "digest": "sha256:" + hashlib.sha256(section.encode()).hexdigest()})
-    ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, checker_digest))
-    ctx.register_middleware("llm_request", _observe_request(folder, identity, frames, observation["sections"]))
+    ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, instance, checker_digest))
+    ctx.register_middleware("llm_request", _observe_request(folder, identity, instance, frames, observation["sections"]))
     _report(folder, "registered.json", observation)
