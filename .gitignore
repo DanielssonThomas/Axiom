@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.axiom/runs/
+.axiom/cache/
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

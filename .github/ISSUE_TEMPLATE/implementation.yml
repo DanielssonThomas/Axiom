@@ -1,0 +1,45 @@
+name: Implementation
+description: A bounded change with explicit acceptance criteria and evidence.
+title: "[Area] Outcome"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow AGENTS.md. Link the parent epic and prerequisites; claim the issue before implementation.
+        An issue is complete only when its acceptance criteria have evidence for the final revision.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: The concrete problem and observable result.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Owned paths and boundaries
+      description: State owned paths, shared-file coordination, and what is out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Parent and dependencies
+      description: Link the parent epic and prerequisite issues; write None when there are no prerequisites.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use checkboxes with measurable pass conditions, including negative cases.
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Name commands or test paths, the meaningful RED/GREEN case, and relevant runtime checks. Explain any justified exception.
+    validations:
+      required: true
