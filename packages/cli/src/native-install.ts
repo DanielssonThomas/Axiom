@@ -34,6 +34,14 @@ function blocked(error: unknown): { outcome: EvidenceOutcome } {
 const json = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
 const digest = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+async function readJson(file: string | URL) {
+  try {
+    return JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    throw new Error("Native bundle metadata is missing or invalid.");
+  }
+}
+
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const environment = {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull,
@@ -85,7 +93,7 @@ export async function runNativeBundle(options: { repository: string; output: str
 Promise<NativeResult<NativeDistribution & { directory: string; hermesUrl: string }>> {
   let temporary: string | undefined;
   try {
-    const version = options.version ?? JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
+    const version = options.version ?? (await readJson(new URL("../package.json", import.meta.url))).version;
     if (typeof version !== "string" || version.length > 128 || !versionPattern.test(version)) {
       throw new Error("Choose a numeric plugin version, optionally with a prerelease suffix.");
     }
@@ -137,7 +145,7 @@ Promise<NativeResult<NativeDistribution & { directory: string; hermesUrl: string
 
 async function readStagedCodexBundle(distribution: string): Promise<CodexBundle> {
   const directory = await realpath(distribution);
-  const manifest = JSON.parse(await readFile(join(directory, "axiom-distribution.json"), "utf8"));
+  const manifest = await readJson(join(directory, "axiom-distribution.json"));
   const native = manifest?.hosts?.codex;
   const root = join(directory, "codex");
   if (manifest?.schemaVersion !== 1 || native?.directory !== "codex" || native.hostVersion !== codexVersion ||
@@ -146,7 +154,7 @@ async function readStagedCodexBundle(distribution: string): Promise<CodexBundle>
     throw new Error("The staged Codex artifact failed its version and digest checks.");
   }
   const plugin = join(root, "plugins", "axiom");
-  const metadata = JSON.parse(await readFile(join(plugin, "axiom-policy.json"), "utf8"));
+  const metadata = await readJson(join(plugin, "axiom-policy.json"));
   const policy = policyIdentitySchema.parse(metadata.policy);
   const instructions = (await readFile(join(plugin, "axiom-policy.txt"), "utf8")).replace(/\n$/, "");
   if (policy.digest !== policyIdentitySchema.parse(manifest.policy).digest || digest(instructions) !== metadata.instructionsDigest) {
@@ -164,16 +172,24 @@ async function codexProgram(explicit?: string): Promise<string> {
   throw new Error("Codex is unavailable on PATH. Supply the path to the pinned executable.");
 }
 
-export async function runCodexLifecycle(options: { action: CodexLifecycle; distribution?: string; program?: string; home?: string }):
+export async function runCodexLifecycle(options: {
+  action: CodexLifecycle;
+  distribution?: string;
+  program?: string;
+  home?: string;
+  userHome?: string;
+  workspace?: string;
+}):
 Promise<NativeResult<{ host: "codex"; action: CodexLifecycle; version?: string }>> {
   try {
     const { action, distribution } = options;
     const requiresArtifact = action === "install" || action === "update";
     if (requiresArtifact && !distribution) throw new Error("Supply a staged native distribution for Codex installation or update.");
     const bundle = requiresArtifact ? await readStagedCodexBundle(distribution!) : undefined;
-    const userHome = homedir();
+    const userHome = resolve(options.userHome ?? homedir());
     const home = resolve(options.home ?? process.env.CODEX_HOME ?? join(userHome, ".codex"));
-    await configureCodexProfile({ home, workspace: process.cwd(), userHome, program: await codexProgram(options.program) }, action, bundle);
+    await configureCodexProfile({ home, workspace: resolve(options.workspace ?? process.cwd()), userHome,
+      program: await codexProgram(options.program) }, action, bundle);
     return { outcome: { status: "passed" }, report: { host: "codex", action, ...(bundle ? { version: bundle.version } : {}) } };
   } catch (error) {
     return blocked(error);

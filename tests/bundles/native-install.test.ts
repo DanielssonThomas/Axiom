@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,3 +73,117 @@ test("rejects unreviewed source changes and preserves a caller-owned destination
   expect((await runNativeBundle({ repository, output: join(root, "dirty") })).outcome)
     .toMatchObject({ status: "blocked", reason: expect.stringMatching(/uncommitted/) });
 });
+
+async function nativeFixture() {
+  const { runNativeBundle } = await import("../../packages/cli/src/native-install.js");
+  const { repository, root } = createWorkspace();
+  const output = join(root, "distribution");
+  const bundle = await runNativeBundle({ repository, output, version: "0.2.5" });
+  expect(bundle.outcome).toEqual({ status: "passed" });
+  const home = join(root, "user");
+  mkdirSync(home);
+  const connectivity = Object.fromEntries(["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR"].map((key) => [key, process.env[key]]));
+  const env = { ...connectivity, PATH: process.env.PATH, HOME: home, CLAUDE_CONFIG_DIR: join(home, "claude"),
+    CODEX_HOME: join(home, "codex"), HERMES_HOME: join(home, "hermes"), HERMES_DISABLE_AUTO_UPDATE: "1",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", GIT_TERMINAL_PROMPT: "0" };
+  const run = (binary: string, args: string[], cwd = repository) => execFileSync(binary, args, {
+    cwd, env, encoding: "utf8", timeout: 35_000,
+  });
+  return { root, repository, output, home, env, run, report: bundle.report!, runNativeBundle };
+}
+
+test("rejects an altered Codex distribution before touching the selected profile", async () => {
+  const { runCodexLifecycle } = await import("../../packages/cli/src/native-install.js");
+  const { output, repository, root } = await nativeFixture();
+  writeFileSync(join(output, "codex/plugins/axiom/axiom-policy.txt"), "Altered bundle policy.\n");
+  const home = join(root, "unmodified-profile");
+  const result = await runCodexLifecycle({ distribution: output, action: "install", home, workspace: repository,
+    program: join(root, "unavailable-codex") });
+  expect(result.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/digest/) });
+  expect(existsSync(home)).toBe(false);
+});
+
+test.runIf(Boolean(process.env.AXIOM_TEST_CLAUDE_BINARY) && process.platform === "linux")(
+  "installs and updates the staged Claude marketplace with native commands and keeps unrelated settings", async () => {
+    const { output, repository, root, env, run, report, runNativeBundle } = await nativeFixture();
+    const program = process.env.AXIOM_TEST_CLAUDE_BINARY!;
+    mkdirSync(env.CLAUDE_CONFIG_DIR);
+    const settings = join(env.CLAUDE_CONFIG_DIR, "settings.json");
+    writeFileSync(settings, '{"env":{"AXIOM_TEST_UNRELATED":"keep"}}\n');
+    expect(run(program, ["--version"])).toContain(report.hosts.claude.hostVersion);
+    run(program, ["plugin", "marketplace", "add", join(output, "claude")]);
+    run(program, ["plugin", "install", "axiom@axiom-local", "--scope", "local"]);
+    expect(JSON.parse(run(program, ["plugin", "list", "--json"]))).toContainEqual(expect.objectContaining({
+      id: "axiom@axiom-local", version: "0.2.5", scope: "local", enabled: true,
+    }));
+    const update = join(root, "updated");
+    expect((await runNativeBundle({ repository, output: update, version: "0.2.6" })).outcome).toEqual({ status: "passed" });
+    const marketplace = join(output, "claude");
+    renameSync(marketplace, join(root, "previous-claude"));
+    cpSync(join(update, "claude"), marketplace, { recursive: true });
+    run(program, ["plugin", "marketplace", "update", "axiom-local"]);
+    run(program, ["plugin", "update", "axiom@axiom-local", "--scope", "local"]);
+    expect(JSON.parse(run(program, ["plugin", "list", "--json"]))).toContainEqual(expect.objectContaining({
+      id: "axiom@axiom-local", version: "0.2.6", scope: "local", enabled: true,
+    }));
+    run(program, ["plugin", "disable", "axiom@axiom-local", "--scope", "local"]);
+    run(program, ["plugin", "uninstall", "axiom@axiom-local", "--scope", "local"]);
+    expect(JSON.parse(readFileSync(settings, "utf8"))).toMatchObject({ env: { AXIOM_TEST_UNRELATED: "keep" } });
+  }, 50_000,
+);
+
+test.runIf(Boolean(process.env.AXIOM_TEST_CODEX_BINARY) && process.platform === "linux")(
+  "installs the staged Codex plugin and observes the owned policy bridge", async () => {
+    const { runCodexLifecycle } = await import("../../packages/cli/src/native-install.js");
+    const { output, repository, root, home, env, run, report, runNativeBundle } = await nativeFixture();
+    const program = process.env.AXIOM_TEST_CODEX_BINARY!;
+    mkdirSync(env.CODEX_HOME);
+    const instructions = join(env.CODEX_HOME, "AGENTS.md");
+    const original = "Retain this existing profile instruction.\n";
+    writeFileSync(instructions, original);
+    const target = { distribution: output, home: env.CODEX_HOME, userHome: home, workspace: repository, program };
+    expect(run(program, ["--version"])).toContain(report.hosts.codex.hostVersion);
+    expect((await runCodexLifecycle({ ...target, action: "install" })).outcome).toEqual({ status: "passed" });
+    const prompt = run(program, ["debug", "prompt-input"]);
+    expect(prompt).toContain(report.policy.digest);
+    expect(prompt).toContain("axiom:verify");
+    expect(prompt).toContain(original.trim());
+    const distribution = join(root, "updated");
+    const update = await runNativeBundle({ repository, output: distribution, version: "0.2.6", profiles: ["angular-nx"] });
+    expect(update.outcome).toEqual({ status: "passed" });
+    expect((await runCodexLifecycle({ ...target, distribution, action: "update" })).outcome).toEqual({ status: "passed" });
+    expect(run(program, ["debug", "prompt-input"])).toContain(update.report!.policy.digest);
+    expect((await runCodexLifecycle({ ...target, action: "disable" })).outcome).toEqual({ status: "passed" });
+    expect(readFileSync(instructions, "utf8")).toBe(original);
+    expect((await runCodexLifecycle({ ...target, action: "uninstall" })).outcome).toEqual({ status: "passed" });
+    expect(readFileSync(instructions, "utf8")).toBe(original);
+  }, 50_000,
+);
+
+test.runIf(Boolean(process.env.AXIOM_HERMES_CLI) && process.platform === "linux")(
+  "installs and updates the staged Hermes Git artifact at an exact commit", async () => {
+    const { output, repository, root, run, report, runNativeBundle } = await nativeFixture();
+    const program = process.env.AXIOM_HERMES_CLI!;
+    expect(run(program, ["--version"])).toContain(report.hosts.hermes.hostVersion);
+    run(program, ["profile", "create", "qualification", "--no-alias", "--no-credentials"]);
+    const native = (...args: string[]) => run(program, ["--profile", "qualification", "plugins", ...args]);
+    native("install", report.hermesUrl, "--ref", report.hosts.hermes.commit, "--no-enable");
+    native("enable", "axiom");
+    expect(JSON.parse(native("list", "--user", "--json"))).toContainEqual(expect.objectContaining({
+      name: "axiom", version: "0.2.5", status: "enabled",
+    }));
+
+    const updated = await runNativeBundle({ repository, output: join(root, "updated"), version: "0.2.6" });
+    expect(updated.outcome).toEqual({ status: "passed" });
+    const next = updated.report!.hosts.hermes.commit;
+    run("git", ["--git-dir", join(output, "hermes"), "fetch", "--no-tags", join(root, "updated", "hermes"),
+      `${next}:refs/heads/staged-0.2.6`]);
+    native("install", report.hermesUrl, "--force", "--ref", next, "--enable");
+    expect(JSON.parse(native("list", "--user", "--json"))).toContainEqual(expect.objectContaining({
+      name: "axiom", version: "0.2.6", status: "enabled",
+    }));
+    native("remove", "axiom");
+    expect(JSON.parse(native("list", "--user", "--json"))).not.toContainEqual(expect.objectContaining({ name: "axiom" }));
+  }, 90_000,
+);

@@ -1,59 +1,84 @@
 # Axiom bundle installation
 
-The workspace builds three native-layout fixtures for packaging and lifecycle tests. Their manifests set `fixture: true`. Before installing a release in a working profile, verify the artifact and your host version against the [compatibility matrix](compatibility.md).
+Use a reviewed Axiom checkout and a pinned native CLI. The [compatibility matrix](compatibility.md) records observed host versions and supported surfaces.
 
-## Build and inspect
+## Prepare a native distribution
 
-Run `pnpm install --frozen-lockfile` and `pnpm build` from the repository root. The build lists fixture directories under `packages/bundles/dist/fixtures/<version>/<host>/<digest>`. Each directory includes an `axiom-bundle.json` with the source revision, artifact version, policy identity, normalized policy and skill file hashes, runtime inventory, and missing adapter requirements. The build records Git HEAD when available. For an exported source tree, supply its known revision as `AXIOM_BUNDLE_SOURCE_REVISION`; otherwise the manifest identifies it as a source archive.
+Run these commands from the reviewed checkout using Node.js 24, the pinned pnpm version in `package.json`, and Git. Use a new output directory and set the artifact version explicitly. The commands below stage version `0.1.0` for local qualification.
 
-The assembler copies canonical `core/AXIOMS.md`, selected profiles and their parents, the selected skill entry points and declared runtime references, and `LICENSE`. An adapter supplies the native manifests and any explicitly required runtime files. Reference paths stay inside the owning skill's `references/`, `assets/`, or `scripts/` directory. Assembly rejects invalid paths and symlinks. Private evaluations, graders, held-out data, credentials, and run outputs stay outside the runtime inventory.
+```sh
+AXIOM_CHECKOUT="$PWD"
+AXIOM_DIST="$AXIOM_CHECKOUT/dist/axiom-0.1.0"
+pnpm install --frozen-lockfile
+pnpm build
+node packages/cli/dist/index.js bundle --out "$AXIOM_DIST" --version 0.1.0
+```
 
-Artifact normalization uses UTF-8 text, LF line endings, and POSIX relative paths sorted by code-unit order. It preserves other textual content. All inventory hashes use SHA-256. The shared policy resolver provides `policy.digest`, and `policyContentDigest` fingerprints the exact normalized core and profile files carried by the artifact. Each skill hash fingerprints its entry point and declared runtime references. The bundle digest covers the manifest fields and ordered file hashes before the digest field is appended. File timestamps and permissions are outside this digest. A repeated write verifies an existing content-addressed artifact.
+The build stages native Claude and Codex marketplaces and a local Git repository for Hermes. The default includes the complete core and all canonical skills. Add `--profile angular-nx` to select Angular/Nx with its inherited atomic UI profile. The command reports the local Hermes file URL and full Git commit for its native pin. Save `axiom-distribution.json` with the staged artifacts. It records the committed source revision, artifact version, resolved policy identity, pinned CLI versions, and per-host digests. Build fixtures under `packages/bundles/dist/fixtures` support packaging tests and carry `fixture: true`.
+
+The assembler selects canonical runtime files and excludes evaluations, graders, credentials, and run outputs. Claude and Hermes use the shared runtime inventory in `axiom-bundle.json`, and the Codex distribution pins its file inventory by digest. A repeat build from the same reviewed inputs produces the same distribution manifest and Hermes commit.
 
 ## Claude Code
 
-The commands below follow the Claude Code 2.1.330 CLI reference. Use a local marketplace directory containing the Claude artifact and keep its path stable across versions, or use a release marketplace while keeping the same qualified plugin identifier. Select `local` for your current project only, `project` for shared project settings, or `user` for your user settings. Run every lifecycle command at the intended scope. [Claude Code plugin CLI reference](https://code.claude.com/docs/en/plugins/cli-reference.md)
+Use Claude Code **2.1.330** and Node.js 24 on `PATH` for the installed hook. Run `claude --version` before installing. From the intended project, select `local` for that project's personal settings, `project` for shared project settings, or `user` for a user-wide installation. [Claude Code plugin CLI reference](https://code.claude.com/docs/en/plugins/cli-reference.md)
 
 ```sh
-claude plugin marketplace add /absolute/path/to/claude-marketplace
+claude plugin marketplace add "$AXIOM_DIST/claude"
 claude plugin install axiom@axiom-local --scope local
+claude plugin list --json
+```
+
+For a versioned update, stage the newer reviewed artifact and make its complete `claude` directory available at the registered marketplace path. Refresh the marketplace and update the installed plugin at its selected scope.
+
+```sh
 claude plugin marketplace update axiom-local
 claude plugin update axiom@axiom-local --scope local
 claude plugin disable axiom@axiom-local --scope local
 claude plugin uninstall axiom@axiom-local --scope local
 ```
 
-Run the two update commands after the newer artifact is available at the registered source. Start a new Claude Code session or run `/reload-plugins` in the session after lifecycle changes. Local and user plugins do not carry into Claude Code cloud sessions. [Claude Code plugin installation](https://code.claude.com/docs/en/plugins/install.md)
+Start a new Claude Code session or run `/reload-plugins` after a lifecycle change. Local and user plugins do not carry into Claude Code cloud sessions. [Claude Code plugin installation](https://code.claude.com/docs/en/plugins/install.md)
 
 ## Codex CLI
 
-The commands match the plugin CLI in Codex 0.172.0-alpha.2. Select the intended local Codex home, using `CODEX_HOME` to isolate a test profile. Register a stable local marketplace directory that contains the Codex artifact. This flow uses a local Codex configuration scope. [Codex plugin documentation](https://developers.openai.com/codex/plugins/)
+Use Codex **0.172.0-alpha.2** and confirm with `codex --version`. The Axiom command registers and installs the package through the pinned native plugin mechanism and manages the Axiom-owned core instruction block in the selected profile's `AGENTS.md`. Use `--home` to select a disposable profile, or use the current `CODEX_HOME` or native default. Use `--program` if the pinned Codex binary is outside `PATH`. [Codex plugin documentation](https://developers.openai.com/codex/plugins/)
 
 ```sh
-codex plugin marketplace add /absolute/path/to/codex-marketplace
-codex plugin add axiom@axiom-local
-codex plugin list --marketplace axiom-local --available
-codex plugin remove axiom@axiom-local
+node "$AXIOM_CHECKOUT/packages/cli/dist/index.js" codex install --distribution "$AXIOM_DIST"
+codex plugin list --marketplace axiom-local --available --json
 ```
 
-After a newer version is available at the configured source, run `codex plugin add axiom@axiom-local` again. For a Git-backed marketplace, run `codex plugin marketplace upgrade axiom-local` first and then install the updated plugin. For a session-only disable, launch with `codex -c 'plugins.axiom@axiom-local.enabled=false'`. To disable persistently, set `enabled = false` in `[plugins."axiom@axiom-local"]` in the selected home's `config.toml` or use the native plugin management UI. Open a new session after changing the installation or plugin selection. Query the installed state before treating a lifecycle command as evidence of activation. [Codex CLI reference](https://developers.openai.com/codex/cli/reference/)
+Use the same Axiom lifecycle entry point for updates and removal so the profile instructions follow the native selection. Set `AXIOM_NEXT` to the newly staged distribution. Specify the same `--home` if you selected another profile. [Codex CLI reference](https://developers.openai.com/codex/cli/reference/)
+
+```sh
+node "$AXIOM_CHECKOUT/packages/cli/dist/index.js" codex update --distribution "$AXIOM_NEXT"
+node "$AXIOM_CHECKOUT/packages/cli/dist/index.js" codex disable
+node "$AXIOM_CHECKOUT/packages/cli/dist/index.js" codex uninstall
+```
 
 ## Hermes Agent
 
-These commands use Hermes Agent 0.23.3 and a named profile. The installed shared checker uses Node.js 24 on the host's `PATH`. For a disposable Git test, place the assembled native Hermes artifact at the Git repository root. Set `HERMES_RELEASE_URL` to that repository's `file://` URL and set `INITIAL_COMMIT_SHA` and `UPDATE_COMMIT_SHA` to the full 40-character commit SHAs for the reviewed artifacts. Hermes's package manager may provision its pinned Python runtime during installation. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
+Use Hermes Agent **0.23.3** and a named profile. Confirm the CLI with `hermes --version`. The installed shared checker uses Node.js 24 on `PATH`. Set `AXIOM_HERMES_URL` to `hermesUrl` printed by the staging command and obtain its full commit from the staged Git source. Hermes's package manager may provision its pinned Python runtime during the first installation. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
 ```sh
-export HERMES_HOME=/absolute/path/to/disposable-hermes-home
+AXIOM_HERMES_PIN=$(git -C "$AXIOM_DIST/hermes" rev-parse HEAD)
 hermes profile create axiom-test --no-alias --no-credentials
-hermes --profile axiom-test plugins install "$HERMES_RELEASE_URL" --ref "$INITIAL_COMMIT_SHA" --no-enable
+hermes --profile axiom-test plugins install "$AXIOM_HERMES_URL" --ref "$AXIOM_HERMES_PIN" --no-enable
 hermes --profile axiom-test plugins enable axiom
 hermes --profile axiom-test plugins list --user --json
-hermes --profile axiom-test plugins install "$HERMES_RELEASE_URL" --force --ref "$UPDATE_COMMIT_SHA" --enable
+```
+
+Use the profile creation command for a disposable installation. For an existing profile, use its name. To update a staged local Git source while retaining its URL, fetch the reviewed commit from a newly staged distribution into that source. Set `AXIOM_NEXT` to the new distribution and choose a local branch name that describes the release.
+
+```sh
+AXIOM_NEXT_PIN=$(git -C "$AXIOM_NEXT/hermes" rev-parse HEAD)
+git --git-dir "$AXIOM_DIST/hermes" fetch --no-tags "$AXIOM_NEXT/hermes" "$AXIOM_NEXT_PIN:refs/heads/axiom-update"
+hermes --profile axiom-test plugins install "$AXIOM_HERMES_URL" --force --ref "$AXIOM_NEXT_PIN" --enable
 hermes --profile axiom-test plugins disable axiom
 hermes --profile axiom-test plugins remove axiom
 ```
 
-The second install moves the source pin to the reviewed update. Start a new session in the selected profile after changing plugin state. Check the native inventory, then verify policy loading and a skill call in that session. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
+Start a new session in the selected profile after changing plugin state. Check the native inventory, then verify policy loading and a skill call in that session. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
 ## Verify the result
 
