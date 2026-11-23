@@ -52,7 +52,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       directory = (() => { try { return profileDirectory({ home, profile }); } catch { return undefined; } })();
       if (created.code !== 0 || !directory) return blocked("The disposable Hermes profile could not be created.");
       await writeFile(join(directory, "config.yaml"), JSON.stringify({
-        gateway: { standalone: true }, hooks_auto_accept: true,
+        _config_version: 54, gateway: { standalone: true }, hooks_auto_accept: true,
         hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace].map((part) => JSON.stringify(part)).join(" "),
           timeout: 5, fail_closed: true }] },
       }), { mode: 0o600 });

@@ -168,7 +168,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       const gateway = await openHermesGateway({
         ...base, args: [...(this.options.standalone ? scope : this.options.arguments ?? []),
           "gateway", "run", "--no-supervise", "--external-supervisor"],
-      }, this.options.standalone ? selected : home, profile.profile);
+      }, this.options.standalone ? selected : home, profile.profile, this.options.standalone);
       if ("interrupted" in gateway) return gateway.interrupted === "unavailable"
         ? blocked("The owned Hermes foreground gateway did not start.") : interrupt(gateway.interrupted);
       let returned;

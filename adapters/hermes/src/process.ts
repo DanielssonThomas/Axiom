@@ -77,7 +77,7 @@ type GatewayLaunch =
   | { interrupted: "cancelled" | "timeout" | "unavailable" };
 
 /** Own the foreground gateway instead of allowing chat to detach a surviving auto-start owner. */
-export async function openHermesGateway(options: Launch, home: string, profile: string): Promise<GatewayLaunch> {
+export async function openHermesGateway(options: Launch, home: string, profile: string, standalone = false): Promise<GatewayLaunch> {
   if (options.signal.aborted) return { interrupted: "cancelled" };
   if (performance.now() >= options.deadline) return { interrupted: "timeout" };
   const child = spawn(options.executable, options.args, {
@@ -99,8 +99,12 @@ export async function openHermesGateway(options: Launch, home: string, profile: 
   while (!closed && !options.signal.aborted && performance.now() < options.deadline) {
     try {
       const state = JSON.parse(await readFile(join(home, "gateway_state.json"), "utf8"));
-      if (!closed && state.pid === child.pid && state.gateway_state === "running"
-        && Array.isArray(state.served_profiles) && state.served_profiles.includes(profile)) return { stop, signal: lifetime.signal };
+      const servesProfile = Array.isArray(state.served_profiles) && (standalone
+        ? state.hermes_home === home && state.served_profiles.length === 0 && Boolean(state.multiplex_standalone_reason)
+        : state.served_profiles.includes(profile));
+      if (!closed && state.pid === child.pid && state.gateway_state === "running" && servesProfile) {
+        return { stop, signal: lifetime.signal };
+      }
     } catch { /* Hermes publishes readiness after startup. */ }
     await sleep(25, undefined, { signal: options.signal }).catch(() => {});
   }
