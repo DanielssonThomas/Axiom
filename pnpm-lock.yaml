@@ -33,6 +33,15 @@ importers:
         specifier: workspace:*
         version: link:../evidence
 
+  packages/bundles:
+    dependencies:
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@axiom/policy':
+        specifier: workspace:*
+        version: link:../policy
+
   packages/cli:
     dependencies:
       '@axiom/contracts':
