@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, sym
 import { tmpdir } from "node:os";
 import { basename, delimiter, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { expect, test } from "vitest";
 import { inspectAngularWorkspace } from "../../../profiles/angular-nx/checks.js";
 import { generateAngularComponent } from "../../../profiles/angular-nx/generator.js";
@@ -75,7 +76,7 @@ test.runIf(nativeModules)("generates and verifies the installed Angular/Nx fixtu
       });
       expect(result.error, target).toBeUndefined();
       expect(result.status, `${target}\n${result.stdout}\n${result.stderr}`).toBe(0);
-      if (target === "test") expect(result.stdout).toMatch(/Tests\s+2 passed/);
+      if (target === "test") expect(stripVTControlCharacters(result.stdout)).toMatch(/Tests\s+2 passed/);
     }
     expect(existsSync(join(workspace, "dist", "catalog-web", "browser", "index.html"))).toBe(true);
   } finally {
