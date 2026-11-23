@@ -126,7 +126,7 @@ test("seeded diagnosis verifies a regression with the owner and exposes the work
     for (const [path, contents] of Object.entries(workaround)) writeFileSync(join(directory, path), contents);
     expect(executable).toThrow();
 
-    expect(readdirSync(directory).filter((path) => !originalFiles.includes(path))).toEqual(["WORKAROUND.md", "retry-wrapper.mjs"]);
+    expect(readdirSync(directory).filter((path) => !originalFiles.includes(path)).sort()).toEqual(["WORKAROUND.md", "retry-wrapper.mjs"]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

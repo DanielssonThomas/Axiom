@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { stat } from "node:fs/promises";
+import spawn from "cross-spawn";
 import type { CommandCompletion, CommandInvocation } from "@axiom/evidence";
 
 function killCommand(child: ChildProcess, processGroup: boolean): void {

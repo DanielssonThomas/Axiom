@@ -84,6 +84,18 @@ test("resolves corroborating repository-native commands and records a real autom
   });
 });
 
+test("passes a spaced argument to the repository package-manager script", async () => {
+  await writeFile(join(root, "check.cjs"), 'if (process.argv[2] !== "two words") process.exitCode = 1;\n');
+  const plan = await planVerification({
+    root, task: verificationTask(), requirements: [{
+      ...automated, command: { script: { name: "test", args: ["two words"] } },
+    }],
+  });
+  expect(plan.checks).toMatchObject([{ invocation: { executable: "pnpm", args: ["run", "test", "two words"] } }]);
+  const { report } = await executeVerification({ plan, store });
+  expect(report).toMatchObject({ conforms: true, checks: [{ outcome: { status: "passed" } }] });
+});
+
 test("reports conflicts and unresolved Markdown commands with source provenance", async () => {
   await fixtureDoc({ "Automated checks": "pnpm run lint", "Live checks": "node check.cjs && echo done" });
   const plan = await planVerification({ root, task, requirements: [automated, runtime] });

@@ -7,6 +7,7 @@ import {
   assessCodexActivation, buildCodexBundle, codexCapabilities, createCodexBackend,
   parseCodexTrace, transformProfileInstructions,
 } from "../../../adapters/codex/src/index.js";
+import { runCodex } from "../../../adapters/codex/src/process.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
 
 let root: string;
@@ -102,7 +103,22 @@ test("normalizes completed native events, rejects absent success and drops model
   expect(parseCodexTrace('{"type":"thread.started"}').outcome.status).not.toBe("passed");
 });
 
-test("executes documented Codex argv with a staged profile and blocks cancellation", async () => {
+test("transports literal argv, stdin, and isolated profile roots through a child process", async () => {
+  const script = join(root, "codex fixture.cjs");
+  await writeFile(script, [
+    'let prompt = ""; process.stdin.on("data", (chunk) => { prompt += chunk; });',
+    'process.stdin.on("end", () => console.log(JSON.stringify({',
+    '  args: process.argv.slice(2), prompt, home: process.env.HOME, codex: process.env.CODEX_HOME,',
+    '})));',
+  ].join("\n"));
+  const profile = { program: process.execPath, workspace: root, home: join(root, "codex"), userHome: join(root, "home") };
+  const args = ["exec", "--json", "--model", "literal model & quotes", "-"];
+  const result = await runCodex(profile, [script, ...args], { input: "fixture prompt\n" });
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ args, prompt: "fixture prompt\n", home: profile.userHome, codex: profile.home });
+});
+
+test("executes documented Codex argv on supported Linux and explicitly blocks other platforms", async () => {
   const program = join(root, "codex-fixture");
   await writeFile(program, [
     "#!/usr/bin/env node",
@@ -128,6 +144,12 @@ test("executes documented Codex argv with a staged profile and blocks cancellati
     policy: { version: "1", digest: `sha256:${"0".repeat(64)}`, profiles: [] }, mode: "without_axiom", timeoutMs: 5000,
   };
   const result = backendResultSchema.parse(await backend.run(request, new AbortController().signal));
+  if (process.platform !== "linux") {
+    expect(result.outcome).toEqual({ status: "blocked", reason: expect.stringMatching(/platform is unsupported/i) });
+    expect(result.artifacts).toEqual([]);
+    expect(await backend.run(request, AbortSignal.abort())).toMatchObject({ outcome: { status: "not_run" } });
+    return;
+  }
   expect(result).toMatchObject({ outcome: { status: "passed" }, usage: { metering: "reported", inputTokens: 1 } });
   expect(result.artifacts).toContainEqual(expect.objectContaining({ kind: "action-trace" }));
   const trace = result.artifacts.find(({ kind }) => kind === "action-trace")!;
