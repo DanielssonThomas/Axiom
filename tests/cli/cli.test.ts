@@ -58,6 +58,17 @@ test("built-in benchmark options preserve explicit authorization and reject inva
   if (process.platform === "linux") expect(result.output.reason).toMatch(/--allow-paid/);
 });
 
+test("standard benchmarks require native execution authorization and reject a claimed hard budget", () => {
+  for (const agent of ["codex", "hermes", "claude"]) {
+    const blocked = run("benchmark", agent, "--mode", "standard");
+    expect(blocked).toMatchObject({ code: 1, output: { agent, mode: "standard", status: "blocked",
+      reason: expect.stringMatching(/--allow-native/) } });
+    expect(run("--benchmark", agent, "--mode", "standard")).toEqual(blocked);
+  }
+  expect(run("benchmark", "codex", "--mode", "standard", "--allow-native", "--token-budget", "300000")).toMatchObject({ code: 2 });
+  expect(run("benchmark", "claude", "--mode", "standard", "--allow-paid")).toMatchObject({ code: 2 });
+});
+
 test("doctor distinguishes fresh native loading from changed installed instructions", () => {
   const root = directory();
   const core = readFileSync(new URL("../../core/AXIOMS.md", import.meta.url), "utf8");

@@ -18,6 +18,8 @@ export interface HermesBackendOptions {
   provider: string;
   maxTurns: number;
   baseUrl?: string;
+  standalone?: boolean;
+  toolsets?: readonly string[];
   /** Explicit launcher environment. Ambient provider credentials are excluded. */
   environment?: NodeJS.ProcessEnv;
 }
@@ -164,8 +166,9 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
         return blocked("The native Hermes version could not be matched to the requested version.");
       }
       const gateway = await openHermesGateway({
-        ...base, args: [...this.options.arguments ?? [], "gateway", "run", "--no-supervise", "--external-supervisor"],
-      }, home, profile.profile);
+        ...base, args: [...(this.options.standalone ? scope : this.options.arguments ?? []),
+          "gateway", "run", "--no-supervise", "--external-supervisor"],
+      }, this.options.standalone ? selected : home, profile.profile);
       if ("interrupted" in gateway) return gateway.interrupted === "unavailable"
         ? blocked("The owned Hermes foreground gateway did not start.") : interrupt(gateway.interrupted);
       let returned;
@@ -176,6 +179,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
             ...scope, "chat", "--query-file", "-", "--format", "stream-json",
             "--model", request.host.model, "--provider", provider,
             "--max-turns", String(maxTurns),
+            ...(this.options.toolsets ? ["--toolsets", this.options.toolsets.join(",")] : []),
             ...(this.options.baseUrl ? ["--base-url", this.options.baseUrl] : []),
           ],
         });

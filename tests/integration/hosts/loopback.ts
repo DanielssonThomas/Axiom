@@ -71,7 +71,8 @@ function strings(value: unknown): string[] {
 }
 
 /** Used only for transport evidence. The synthetic responses make no decisions about Axiom policy. */
-export async function openLoopback(protocol: NativeHost, model: string) {
+export async function openLoopback(protocol: NativeHost, model: string,
+  hermesScript?: (observation: RequestObservation) => FixtureTool | undefined) {
   const requests: RequestObservation[] = [];
   let nextHermesTool: (() => Promise<FixtureTool>) | undefined;
   const server = createServer(async (request, response) => {
@@ -94,10 +95,12 @@ export async function openLoopback(protocol: NativeHost, model: string) {
       const toolResults = Array.isArray(messages) ? messages.flatMap((message) =>
         message?.role === "tool" && typeof message.content === "string" ? [message.content] : [],
       ) : [];
-      requests.push({ model: requestedModel, text: strings(body).join("\n"), toolResults });
+      const observation = { model: requestedModel, text: strings(body).join("\n"), toolResults };
+      requests.push(observation);
       const tool = nextHermesTool;
       nextHermesTool = undefined;
-      send(response, { protocol, model, requestNumber: requests.length, ...(tool ? { tool: await tool() } : {}) });
+      const call = tool ? await tool() : hermesScript?.(observation);
+      send(response, { protocol, model, requestNumber: requests.length, ...(call && { tool: call }) });
     } catch {
       response.writeHead(400).end();
     }

@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assembleBundles, loadBundleWorkspace, writeBundles, type BundleHost } from "@axiom/bundles";
@@ -11,6 +10,7 @@ import { buildClaudeBundle, supportedVersion as claudeVersion } from "@axiom/cla
 import { buildCodexBundle, configureCodexProfile, supportedVersion as codexVersion, type CodexBundle, type CodexLifecycle } from "@axiom/codex-adapter";
 import { digestSchema, policyIdentitySchema, profileIdSchema, type EvidenceOutcome, type PolicyIdentity } from "@axiom/contracts";
 import { hermesBundleAdapter, hermesVersion } from "@axiom/hermes-adapter";
+import { nativeProgram } from "./native-program.js";
 
 const execute = promisify(execFile);
 const sourcePaths = ["core", "profiles", "skills", "LICENSE", "adapters", "packages", "package.json",
@@ -66,7 +66,7 @@ async function reviewedRevision(repository: string): Promise<string> {
   return git(repository, ["rev-parse", "--verify", "HEAD"]);
 }
 
-async function codexDigest(directory: string): Promise<string> {
+export async function codexDigest(directory: string): Promise<string> {
   if (!(await lstat(directory)).isDirectory()) throw new Error("Expected a regular native Codex artifact directory.");
   const files: Record<string, string> = Object.create(null);
   const entries = await readdir(directory, { recursive: true, withFileTypes: true });
@@ -164,15 +164,6 @@ async function readStagedCodexBundle(distribution: string): Promise<CodexBundle>
   return { root, version: manifest.version, policy, instructions, skills: Object.keys(metadata.skills).sort() };
 }
 
-async function codexProgram(explicit?: string): Promise<string> {
-  if (explicit) return realpath(resolve(explicit));
-  for (const directory of (process.env.PATH ?? "").split(delimiter).filter(isAbsolute)) {
-    const candidate = join(directory, "codex");
-    if (await access(candidate, constants.X_OK).then(() => true, () => false)) return realpath(candidate);
-  }
-  throw new Error("Codex is unavailable on PATH. Supply the path to the pinned executable.");
-}
-
 export async function runCodexLifecycle(options: {
   action: CodexLifecycle;
   distribution?: string;
@@ -190,7 +181,7 @@ Promise<NativeResult<{ host: "codex"; action: CodexLifecycle; version?: string }
     const userHome = resolve(options.userHome ?? homedir());
     const home = resolve(options.home ?? process.env.CODEX_HOME ?? join(userHome, ".codex"));
     await configureCodexProfile({ home, workspace: resolve(options.workspace ?? process.cwd()), userHome,
-      program: await codexProgram(options.program) }, action, bundle);
+      program: await nativeProgram("codex", options.program) }, action, bundle);
     return { outcome: { status: "passed" }, report: { host: "codex", action, ...(bundle ? { version: bundle.version } : {}) } };
   } catch (error) {
     return blocked(error);

@@ -8,17 +8,18 @@ import { reviewNativeBenchmark } from "./benchmark-review.js";
 import { runCheck } from "./check.js";
 import { runDoctor } from "./doctor.js";
 import { defaultBenchmarkLimits, runNativeBenchmark } from "./native-benchmark.js";
+import { runStandardBenchmark } from "./standard-benchmark.js";
 import { runCodexLifecycle, runNativeBundle } from "./native-install.js";
 
 type Result = { outcome: EvidenceOutcome; report?: unknown };
 type Operation = { summary: Record<string, string>; run(signal: AbortSignal): Promise<Result> };
 
-function options(args: readonly string[], valueNames: readonly string[], repeat?: string, toggle?: string) {
+function options(args: readonly string[], valueNames: readonly string[], repeat?: string, toggles: readonly string[] = []) {
   const found = new Map<string, string[]>();
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (found.has(key) && key !== repeat) return;
-    if (key === toggle) {
+    if (toggles.includes(key)) {
       found.set(key, []);
     } else {
       const value = args[++i];
@@ -51,7 +52,7 @@ async function operatorRequest(command: string, path: string | undefined, agent?
 function parse(args: readonly string[]): Operation | undefined {
   const [command, ...rest] = args;
   const expert = (name: string, arg: readonly string[], agent?: string): Operation | undefined => {
-    const choice = options(arg, ["--request"], undefined, name === "benchmark" ? "--allow-paid" : undefined);
+    const choice = options(arg, ["--request"], undefined, name === "benchmark" ? ["--allow-paid"] : []);
     const request = choice?.get("--request");
     if (!choice || (request !== undefined && (!isAbsolute(request) || !request.endsWith(".mjs")))) return;
     return { summary: { command: name, ...(agent ? { agent } : {}) }, run: async () =>
@@ -64,9 +65,14 @@ function parse(args: readonly string[]): Operation | undefined {
     const [agent, ...args] = rest;
     if (!agent || /^-|\s/.test(agent)) return;
     if (args.includes("--request")) return expert("benchmark", args, agent);
-    const flags = options(args, ["--program", "--model", "--evidence", "--baseline", "--case",
-      "--token-budget", "--max-output-tokens", "--timeout-seconds", "--repetitions"], "--case", "--allow-paid");
+    const flags = options(args, ["--mode", "--auth-home", "--program", "--model", "--evidence", "--baseline", "--case",
+      "--token-budget", "--max-output-tokens", "--timeout-seconds", "--repetitions", "--max-attempts"],
+    "--case", ["--allow-paid", "--allow-native"]);
     if (!flags) return;
+    const mode = flags.get("--mode") ?? "strict";
+    if (mode !== "standard" && mode !== "strict") return;
+    if (mode === "standard" ? ["--allow-paid", "--token-budget", "--max-output-tokens"].some(flags.has)
+      : ["--allow-native", "--auth-home", "--max-attempts"].some(flags.has)) return;
     const numbers = {
       tokenBudget: "--token-budget", maxOutputTokens: "--max-output-tokens",
       timeoutSeconds: "--timeout-seconds", repetitions: "--repetitions",
@@ -84,10 +90,22 @@ function parse(args: readonly string[]): Operation | undefined {
     const baselineRef = flags.get("--baseline");
     const caseIds = flags.all("--case");
     const model = flags.get("--model");
-    return { summary: { command: "benchmark", agent }, run: (signal) => runNativeBenchmark(agent, {
-      ...limits, repository: process.cwd(), allowPaid: flags.has("--allow-paid"),
+    const shared = { repository: process.cwd(), timeoutSeconds: limits.timeoutSeconds, repetitions: limits.repetitions,
       ...(program ? { program: resolve(program) } : {}), ...(evidence ? { evidenceDirectory: resolve(evidence) } : {}),
       ...(baselineRef ? { baselineRef } : {}), ...(caseIds ? { caseIds } : {}), ...(model ? { model } : {}),
+    };
+    if (mode === "standard") {
+      const maxAttempts = flags.get("--max-attempts");
+      if (maxAttempts !== undefined && !/^\d+$/.test(maxAttempts)) return;
+      const authHome = flags.get("--auth-home");
+      return { summary: { command: "benchmark", agent, mode }, run: (signal) => runStandardBenchmark(agent, {
+        ...shared, allowNative: flags.has("--allow-native"),
+        ...(maxAttempts !== undefined && { maxAttempts: Number(maxAttempts) }),
+        ...(authHome && { authHome: resolve(authHome) }),
+      }, signal) };
+    }
+    return { summary: { command: "benchmark", agent }, run: (signal) => runNativeBenchmark(agent, {
+      ...shared, tokenBudget: limits.tokenBudget, maxOutputTokens: limits.maxOutputTokens, allowPaid: flags.has("--allow-paid"),
     }, signal) };
   }
   if (command === "benchmark-review") {

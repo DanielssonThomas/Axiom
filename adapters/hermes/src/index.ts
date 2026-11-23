@@ -1,4 +1,5 @@
 export { HermesBenchmarkBackend } from "./backend.js";
+export { createHermesAccountBackend } from "./standard.js";
 export type { HermesBackendOptions } from "./backend.js";
 export { hermesBundleAdapter, hermesCapabilities, hermesVersion } from "./bundle.js";
 export { checkHermesEvent } from "./hooks.js";

@@ -77,6 +77,16 @@ function options(overrides: Partial<BenchmarkOptions> = {}): BenchmarkOptions {
   };
 }
 
+test("records bounded native diagnostics separately from isolated runtimes and never starts excess attempts", async () => {
+  const report = await runBenchmark(options({
+    repetitions: 2, limits: { timeoutMs: 4000, maxConcurrency: 1, maxAttempts: 2 },
+    openRuntime: async (workspace) => ({ ...await fake(workspace), kind: "native" }),
+  }));
+  expect(report.attempts.map(({ runtime, outcome }) => [runtime, outcome.status])).toEqual([
+    ["native", "passed"], ["native", "passed"], [undefined, "not_run"], [undefined, "not_run"],
+  ]);
+});
+
 test("stages only selected shared and skill-local fixtures and records comparable paired attempts", async () => {
   const requests: BackendRequest[] = [];
   const workspaces: string[] = [];

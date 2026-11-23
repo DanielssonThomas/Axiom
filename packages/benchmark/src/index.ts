@@ -90,7 +90,7 @@ async function executeAttempt(
     try {
       phase = "The backend did not return a valid execution result.";
       signal.throwIfAborted();
-      if (runtime.kind !== "fixture" && runtime.kind !== "isolated") throw new Error("Unknown runtime kind.");
+      if (runtime.kind !== "fixture" && runtime.kind !== "isolated" && runtime.kind !== "native") throw new Error("Unknown runtime kind.");
       attempt.runtime = runtime.kind;
       const request = backendRequestSchema.parse({
         id: attempt.id, caseId: evaluation.id, prompt: evaluation.prompt, workspace: runtime.workspace,

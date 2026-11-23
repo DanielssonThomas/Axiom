@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { digestSchema, evidenceSchema, policyIdentitySchema, sourceIdentitySchema, type EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { gradeCase, type GradingAction } from "@axiom/graders";
-import { reviewedCases, reviewedGrader, type runTrustedClaude } from "./native-benchmark.js";
+import { reviewedCases, reviewedGrader, standardQualification, type BenchmarkArchive } from "./benchmark-archive.js";
 import { prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 function snapshot(value: unknown): Map<string, string> {
@@ -16,24 +16,31 @@ function snapshot(value: unknown): Map<string, string> {
   return files;
 }
 
-type Archive = Awaited<ReturnType<typeof runTrustedClaude>>;
-
 export async function reviewNativeBenchmark(repository: string, directory: string, expectedDigest: string) {
   let baseline: ReviewedBaseline | undefined;
   try {
     const bytes = await readFile(join(directory, "benchmark.json"));
     if (sha256(bytes) !== digestSchema.parse(expectedDigest)) throw new Error("Benchmark summary digest mismatch.");
-    const saved = JSON.parse(bytes.toString("utf8")) as Archive;
+    const saved = JSON.parse(bytes.toString("utf8")) as BenchmarkArchive;
     if (saved.sourceFresh !== true) throw new Error("Trusted source freshness was not established.");
     const revision = await requireCleanBenchmarkRevision(repository);
     if (saved.revision !== revision) throw new Error("Benchmark evidence belongs to a different source revision.");
-    if (saved.provider !== "injected" && saved.provider !== "anthropic-messages") throw new Error("Unknown provider route.");
+    if (saved.mode === "standard") {
+      if ((saved.provider !== "native-account" && saved.provider !== "injected") ||
+          saved.hardBudgetEnforcement !== "unavailable" || saved.metering.metering !== "unknown" ||
+          !isDeepStrictEqual(saved.qualification, standardQualification)) throw new Error("Invalid standard benchmark controls.");
+    } else if (saved.mode !== "strict" || (saved.provider !== "injected" && saved.provider !== "anthropic-messages")) {
+      throw new Error("Unknown benchmark controls.");
+    }
     baseline = await prepareReviewedBaseline(repository, tmpdir(), revision, saved);
     if (await reviewedGrader(repository, baseline.directory) !== saved.report.grader.digest) throw new Error("Grader identity differs.");
     const catalog = await reviewedCases(baseline.directory);
     const store = new EvidenceStore(directory);
     const reviews = [];
     for (const attempt of saved.report.attempts) {
+      if (attempt.runtime !== undefined && attempt.runtime !== (saved.mode === "standard" ? "native" : "isolated")) {
+        throw new Error("The runtime differs from the recorded benchmark mode.");
+      }
       const id = evidenceSchema.shape.id.parse(attempt.id);
       const observed = saved.observations[id];
       if (!observed) {
@@ -89,8 +96,10 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
     const outcome: EvidenceOutcome = reviews.length && reviews.every((item) => Array.isArray(item.assertions))
       ? { status: "passed" } : { status: "blocked", reason: "At least one benchmark attempt lacks a grading observation." };
     return { outcome, report: {
-      review: "evidence-replay", provider: saved.provider, revision, benchmarkOutcome: saved.outcome,
+      review: "evidence-replay", mode: saved.mode, provider: saved.provider, revision, benchmarkOutcome: saved.outcome,
       baselineDigest: saved.baselineDigest, reviews,
+      ...(saved.mode === "standard" && { qualification: standardQualification, hardBudgetEnforcement: saved.hardBudgetEnforcement,
+        metering: saved.metering }),
     } };
   } catch {
     return { outcome: { status: "blocked", reason: "The trusted summary, reviewed grader, or recorded evidence could not be reproduced." } as EvidenceOutcome };
