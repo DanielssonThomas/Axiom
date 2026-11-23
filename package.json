@@ -6,6 +6,7 @@
     "node": "24.x"
   },
   "scripts": {
+    "axiom": "node packages/cli/dist/index.js",
     "build": "tsc --build tsconfig.build.json && pnpm --filter @axiom/hermes-adapter build:bridge && node packages/bundles/dist/build-fixtures.js",
     "typecheck": "tsc --noEmit",
     "test": "pnpm --silent build && node vitest.run.mjs"

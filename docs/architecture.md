@@ -78,8 +78,10 @@ Run `node packages/cli/dist/index.js <command>` after `pnpm build`. The CLI reco
 - `doctor`: identify installed versions, active policy/profile sources, skill discovery, hook coverage, and unsupported capabilities.
 - `check`: run applicable deterministic checks and selected repository-native verification, with evidence for the assessed scope.
 - `benchmark`: execute versioned behavioral cases through actual host backends; the requested `--benchmark <agent>` form is an alias.
+- `benchmark-review` replays saved grading observations against the reviewed case definitions.
+- `bundle` stages the versioned native distribution. `codex install`, `update`, `disable`, and `uninstall` manage the installed native plugin and its policy activation.
 
-Pass `--request /absolute/path/to/request.mjs` after the command arguments. This explicit path loads executable operator configuration. Keep the module outside the evaluated agent's control and use a module you trust. The module exports the requested operation as a named export.
+Use the native benchmark command in the [installation guide](install.md#run-a-local-behavioral-benchmark). Doctor, check, and expert benchmark callers can pass `--request /absolute/path/to/request.mjs`. This explicit path loads executable operator configuration. Keep the module outside the evaluated agent's control and use a module you trust. The module exports the requested operation as a named export. Expert benchmark execution also requires `--allow-paid`.
 
 | Export | Inputs |
 | --- | --- |
@@ -88,6 +90,8 @@ Pass `--request /absolute/path/to/request.mjs` after the command arguments. This
 | `benchmark` | `BenchmarkOptions` using an absolute `evidenceDirectory` in place of `store`. The trusted operator supplies the approved grader and an isolation provider that invokes the requested native adapter. Keep graders, credentials and evidence out of the agent-accessible workspace. |
 
 Both benchmark forms use the same operation, emit `command: "benchmark"`, and identify the requested `agent`. Fixture runtimes can produce diagnostic benchmark reports. A successful CLI disposition requires isolated native execution and observed required evidence for every attempt. Benchmark commands can return fresh run IDs and timings. Every invocation emits one JSON object to stdout.
+
+The built-in Linux Claude runner keeps the reviewed Git archive, compiled grader, evidence directory, and provider API key outside the native process. The sandbox exposes disposable workspace and profile paths, approved system executables and libraries, the selected bundle, and a Unix socket. A bridge makes the socket available on the sandbox's private loopback interface. That socket accepts only the pinned model's standard Messages requests with local tools. The broker reserves the full model context window plus the clamped output cap before submission. It releases unused allocation after a complete independently metered provider response. Missing usage stops further calls.
 
 | Exit code | JSON output |
 | --- | --- |

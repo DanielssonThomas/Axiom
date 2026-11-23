@@ -39,6 +39,11 @@ on:
         description: Total input and output token cap (1 through 1000000)
         required: true
         type: number
+      allow_paid:
+        description: Authorize the budgeted provider calls for this run
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -65,6 +70,9 @@ jobs:
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Stage the pinned Claude Code executable
+        if: inputs.allow_paid && inputs.host == 'claude' && inputs.os == 'linux'
+        run: npm install --ignore-scripts --prefix "$RUNNER_TEMP/axiom-native" @anthropic-ai/claude-code-linux-x64@2.1.330
       - name: Qualify selected installed host
         run: node tests/ci/live.mts
         env:
@@ -77,6 +85,9 @@ jobs:
           AXIOM_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           AXIOM_TOKEN_BUDGET: ${{ inputs.token_budget }}
           AXIOM_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          AXIOM_ALLOW_PAID: ${{ inputs.allow_paid }}
+          AXIOM_CLAUDE_PROGRAM: ${{ runner.temp }}/axiom-native/node_modules/@anthropic-ai/claude-code-linux-x64/claude
+          ANTHROPIC_API_KEY: ${{ inputs.allow_paid && inputs.host == 'claude' && inputs.os == 'linux' && secrets.AXIOM_ANTHROPIC_API_KEY || '' }}
       - name: Upload curated disposition
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

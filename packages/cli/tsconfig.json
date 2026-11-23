@@ -9,9 +9,14 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../benchmark" },
+    { "path": "../bundles" },
     { "path": "../contracts" },
     { "path": "../doctor" },
     { "path": "../evidence" },
-    { "path": "../verification" }
+    { "path": "../verification" },
+    { "path": "../../adapters/claude" },
+    { "path": "../../adapters/codex" },
+    { "path": "../../adapters/hermes" },
+    { "path": "../../evals/graders" }
   ]
 }

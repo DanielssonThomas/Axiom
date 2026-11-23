@@ -9,9 +9,14 @@
   "files": ["dist/*.js"],
   "dependencies": {
     "@axiom/benchmark": "workspace:*",
+    "@axiom/bundles": "workspace:*",
+    "@axiom/claude-adapter": "workspace:*",
+    "@axiom/codex-adapter": "workspace:*",
     "@axiom/contracts": "workspace:*",
     "@axiom/doctor": "workspace:*",
     "@axiom/evidence": "workspace:*",
+    "@axiom/graders": "workspace:*",
+    "@axiom/hermes-adapter": "workspace:*",
     "@axiom/verification": "workspace:*"
   }
 }

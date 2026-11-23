@@ -80,6 +80,31 @@ hermes --profile axiom-test plugins remove axiom
 
 Start a new session in the selected profile after changing plugin state. Check the native inventory, then verify policy loading and a skill call in that session. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
+For the Angular/Nx distribution, the system prompt carries the full core and a profile index. Relevant work retrieves the complete canonical profiles through native `skill_view`. Use `name="axiom:profile-angular-nx", file_path="PROFILE.md"` and `name="axiom:profile-ui-atomic", file_path="PROFILE.md"`. The recorded policy remains incomplete until the provider-bound request contains both native tool results.
+
 ## Verify the result
 
 Record the artifact and policy digests, host version and surface, selected scope or profile, and native observations. Use the [compatibility matrix](compatibility.md) to check the tested configurations and qualification gaps.
+
+## Run a local behavioral benchmark
+
+After building from a clean reviewed checkout, run the built-in Claude Code 2.1.330 benchmark on Linux with Bubblewrap at `/usr/bin/bwrap` and working unprivileged namespaces. Use an existing authorized Anthropic API key in the trusted operator environment as `ANTHROPIC_API_KEY`. The runner uses that key only for the official Anthropic endpoint. The native process receives a disposable profile and a placeholder key for the local broker.
+
+```sh
+node packages/cli/dist/index.js benchmark claude --allow-paid
+```
+
+The default runs one paired trial of `reuse-summary-formatter` on Claude Haiku 4.5 `claude-haiku-4-5-20251001`. The pair compares the same fixture with and without the native plugin. The combined cap is 300,000 input and output tokens including cache tokens, with at most 2,048 output tokens per request and 120 seconds for runtime execution. Before each provider call the broker reserves up to 200,000 input tokens plus the request's allowed output. This conservative reservation can stop a run with unused budget. Git baseline preparation has separate bounded subprocesses. The token limit is not a fixed price quote.
+
+Use `--program /absolute/path/to/claude` for a binary outside `PATH`. Choose a reviewed commit via `--baseline FULL_SHA` or use the current commit. Add `--case ID` more than once to select supported cases. Adjust `--token-budget`, `--max-output-tokens`, `--timeout-seconds`, and `--repetitions` when authorizing the run. The runner rejects cases whose required assertions need an unobserved action such as clarification, browser verification, or worker delivery before it makes a provider call.
+
+Existing native authentication can run ordinary native sessions. Use `claude auth status`, `codex login status`, or `hermes --profile NAME auth list openai-codex` to inspect the corresponding supported login. Native Claude subscription login, Codex ChatGPT login, and the pinned Hermes OpenAI Codex OAuth provider are official options. Their native routes lack an independently verified pre-call token cap in Axiom. Codex and Hermes parent terminal usage also omits observed worker usage. The current qualifying-budget route requires the Anthropic API key described above. [Claude authentication](https://code.claude.com/docs/en/authentication) · [Codex login](https://developers.openai.com/codex/auth) · [Hermes providers](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/website/docs/integrations/providers.md#openai-codex--chatgpt-subscription)
+
+The CLI prints the private `evidenceDirectory` and the summary's `evidenceDigest`. Retain that digest separately. The directory defaults to a new subdirectory of `.axiom/runs`. Inspect `benchmark.json`, the saved grading observations, and the `acceptance/` evidence records. To replay the independent graders locally, supply the printed directory and digest.
+
+```sh
+node packages/cli/dist/index.js benchmark-review \
+  --evidence /absolute/path/to/benchmark-directory --digest sha256:REPLACE_WITH_PRINTED_DIGEST
+```
+
+The review status covers evidence integrity and reproducibility. The replay includes the original benchmark disposition and each replayed assertion. Keep this archive local unless you approve its workspace snapshots for sharing.

@@ -45,9 +45,17 @@ test("both benchmark forms return the same result and echo the requested agent",
   const benchmark = run("benchmark", "codex");
   expect(benchmark).toEqual({
     code: 1,
-    output: { command: "benchmark", agent: "codex", status: "blocked", reason: expect.stringMatching(/request/i) },
+    output: { command: "benchmark", agent: "codex", status: "blocked", reason: expect.stringMatching(/budgeted native route/i) },
   });
   expect(run("--benchmark", "codex")).toEqual(benchmark);
+});
+
+test("built-in benchmark options preserve explicit authorization and reject invalid numeric arguments", () => {
+  expect(run("benchmark", "claude", "--token-budget", "several")).toMatchObject({ code: 2 });
+  expect(run("benchmark", "claude", "--token-budget", "300000", "--allow-paid", "--allow-paid")).toMatchObject({ code: 2 });
+  const result = run("benchmark", "claude");
+  expect(result).toMatchObject({ code: 1, output: { status: "blocked" } });
+  if (process.platform === "linux") expect(result.output.reason).toMatch(/--allow-paid/);
 });
 
 test("doctor distinguishes fresh native loading from changed installed instructions", () => {
@@ -127,8 +135,11 @@ test("runs both aliases through paired benchmark grading and refuses fixture-onl
     }
   };`;
   writeFileSync(path, fixtureModule);
+  expect(run("benchmark", "codex", "--request", path)).toMatchObject({
+    code: 1, output: { status: "blocked", reason: expect.stringContaining("--allow-paid") },
+  });
   function comparable(alias: string) {
-    const { output, code } = run(alias, "codex", "--request", path);
+    const { output, code } = run(alias, "codex", "--request", path, "--allow-paid");
     return { code, command: output.command, agent: output.agent, status: output.status,
       reason: output.reason, attempts: output.report?.attempts.map((attempt: {
         mode: string; runtime: string; outcome: { status: string };

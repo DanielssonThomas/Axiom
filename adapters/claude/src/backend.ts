@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { backendRequestSchema, backendResultSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
-import { claudeVersion, invokeClaude, type ClaudeProfile } from "./process.js";
+import { claudeVersion, invokeClaude, type ClaudeLauncher, type ClaudeProfile } from "./process.js";
+import { configureClaudeProfile } from "./profile.js";
 import { sha256, workerBriefKey } from "./runtime.js";
 import { assessClaudeActivation, parseClaudeTrace, supportedClaudeHost } from "./trace.js";
 import type { ClaudeBundle } from "./bundle.js";
@@ -16,6 +17,9 @@ export interface ClaudeBackendOptions {
   maxBudgetUsd: number;
   bundle?: ClaudeBundle;
   environment?: Readonly<Record<string, string>>;
+  launch?: ClaudeLauncher;
+  installNative?: boolean;
+  tools?: readonly string[];
 }
 
 export interface ClaudeSessionOptions {
@@ -24,6 +28,7 @@ export interface ClaudeSessionOptions {
   prompt: string;
   signal?: AbortSignal;
   bundle?: ClaudeBundle;
+  tools?: readonly string[];
 }
 
 function behind(root: string, path: string): boolean {
@@ -38,6 +43,8 @@ export async function executeClaudeSession(profile: ClaudeProfile, options: Clau
     "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
     "--permission-mode", "dontAsk", "--no-session-persistence", "--max-budget-usd", String(options.maxBudgetUsd),
     "--model", options.model,
+    ...(options.tools ? ["--tools", options.tools.join(","), "--allowedTools", options.tools.join(","),
+      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'] : []),
     ...(options.bundle ? ["--plugin-dir", options.bundle.plugin] : []),
   ], options.signal, options.prompt);
   const hidden = Object.entries(profile.environment ?? {})
@@ -76,14 +83,17 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
       const profile: ClaudeProfile = {
         program: options.program, workspace, home: join(scope, "claude"), userHome: join(scope, "home"),
         ...(options.environment ? { environment: options.environment } : {}),
+        ...(options.launch ? { launch: options.launch } : {}),
       };
       await Promise.all([mkdir(profile.home), mkdir(profile.userHome)]);
       if (await claudeVersion(profile, signal) !== request.host.version) {
         return result({ status: "blocked", reason: "The installed Claude CLI version differs from the request." });
       }
+      if (bundle && options.installNative) await configureClaudeProfile(profile, "user", "install", bundle, signal);
       const trace = await executeClaudeSession(profile, {
         model: request.host.model, maxBudgetUsd: options.maxBudgetUsd, prompt: request.prompt, signal,
-        ...(bundle ? { bundle } : {}),
+        ...(bundle && !options.installNative ? { bundle } : {}),
+        ...(options.tools ? { tools: options.tools } : {}),
       });
       usage = trace.usage;
       if (trace.observation.observedModel !== request.host.model || trace.observation.observedVersion !== request.host.version) {

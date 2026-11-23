@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { authorizeDispatch, parseLiveInputs, prepareReviewedBaseline, runLiveValidation } from "./live.mjs";
 import type { LiveInputs, TrustedLiveRunner } from "./live.mjs";
 
@@ -43,6 +43,7 @@ test("runs locked foundation and fixture checks on all three hosted platforms wi
 test("limits live CI to an explicit owner-run dispatch on main and publishes one curated file", () => {
   const live = workflow("live-validation.yml");
   expect(Object.keys(live.on)).toEqual(["workflow_dispatch"]);
+  expect(live.on.workflow_dispatch.inputs.allow_paid).toMatchObject({ type: "boolean", default: false, required: true });
   const job = live.jobs.live;
   expect(job.if).toContain("github.ref == 'refs/heads/main'");
   expect(job.if).toContain("github.triggering_actor == github.repository_owner");
@@ -58,6 +59,19 @@ test("limits live CI to an explicit owner-run dispatch on main and publishes one
     { event: "pull_request" }, { ref: "refs/heads/unreviewed" }, { actor: "contributor" },
     { triggeringActor: "contributor" },
   ]) expect(authorizeDispatch({ ...owner, ...change })).toBe(false);
+});
+
+test("the installed-host runner requires separate paid approval before inspecting credentials", async () => {
+  const runnerUrl = new URL("../integration/hosts/ci-runner.mjs", import.meta.url).href;
+  const runner = (await import(runnerUrl)).default as TrustedLiveRunner;
+  vi.stubEnv("AXIOM_ALLOW_PAID", "false");
+  vi.stubEnv("ANTHROPIC_API_KEY", "credential-canary");
+  try {
+    const host = { host: "claude", model: "claude-haiku-4-5-20251001", os: "linux" } as const;
+    expect(await runner.readiness(host, new AbortController().signal)).toBe("authorization-required");
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 test("requires a complete immutable host selection and bounded numeric limits", () => {

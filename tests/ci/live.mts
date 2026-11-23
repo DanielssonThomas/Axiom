@@ -1,11 +1,10 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, stat, rm, writeFile } from "node:fs/promises";
+import { stat, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { digestSchema, evidenceOutcomeSchema, usageSchema } from "@axiom/contracts";
 import type { EvidenceOutcome, ResultStatus, Usage } from "@axiom/contracts";
+import { isCommit, prepareReviewedBaseline, type ReviewedBaseline } from "../../packages/cli/src/reviewed-baseline.ts";
+export { prepareReviewedBaseline };
 
 interface DispatchIdentity {
   event?: string | undefined;
@@ -36,10 +35,6 @@ function positiveInteger(input: string | undefined, max: number): number {
   return Number(input);
 }
 
-function isCommit(input: string | undefined): input is string {
-  return Boolean(input && /^[a-f0-9]{40}$/.test(input));
-}
-
 export function parseLiveInputs(environment: NodeJS.ProcessEnv): LiveInputs {
   const { AXIOM_HOST: host, AXIOM_MODEL: model, AXIOM_OS: os, AXIOM_BASELINE_REF: baselineRef } = environment;
   if (host !== "claude" && host !== "codex" && host !== "hermes") throw new Error("An installed host is required.");
@@ -54,41 +49,6 @@ export function parseLiveInputs(environment: NodeJS.ProcessEnv): LiveInputs {
   };
 }
 
-const exec = promisify(execFile);
-
-interface ReviewedBaseline {
-  directory: string;
-  digest: string;
-}
-
-/** Export the reviewed Git tree, whose archived bytes are the inputs given to the verifier. */
-export async function prepareReviewedBaseline(
-  checkout: string, temporary: string, revision: string, input: LiveInputs,
-): Promise<ReviewedBaseline> {
-  if (!isCommit(revision) || !isCommit(input.baselineRef)) throw new Error("A reviewed revision is required.");
-  await exec("git", ["merge-base", "--is-ancestor", input.baselineRef, revision], { cwd: checkout }).catch(() => {
-    throw new Error("The baseline is outside the reviewed revision's history.");
-  });
-  const { stdout } = await exec("git", ["archive", "--format=tar", input.baselineRef, "--", "core", "evals", "profiles", "skills"], {
-    cwd: checkout,
-    encoding: "buffer",
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  const digest = `sha256:${createHash("sha256").update(stdout).digest("hex")}`;
-  if (digest !== input.baselineDigest) throw new Error("The reviewed baseline digest does not match.");
-  const directory = await mkdtemp(join(temporary, "axiom-reviewed-"));
-  const archive = join(directory, "baseline.tar");
-  try {
-    await writeFile(archive, stdout, { flag: "wx", mode: 0o600 });
-    await exec("tar", ["-xf", archive, "-C", directory]);
-    await rm(archive);
-    return { directory, digest };
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 interface LiveTrial {
   host: LiveInputs["host"];
   model: string;
@@ -96,13 +56,14 @@ interface LiveTrial {
   attempt: number;
   tokenLimit: number;
   baseline: ReviewedBaseline;
+  baselineRef?: string;
 }
 
 /** The trusted installed-host runner enforces tokenLimit before provider calls, isolates agent access
  * from the verifier baseline, terminates on abort, and returns independently observed installed-host evidence. */
 export interface TrustedLiveRunner {
   readiness(input: Pick<LiveTrial, "host" | "model" | "os">, signal: AbortSignal):
-    Promise<"ready" | "runner-unavailable" | "credentials-unavailable">;
+    Promise<"ready" | "runner-unavailable" | "credentials-unavailable" | "authorization-required">;
   run(trial: LiveTrial, signal: AbortSignal): Promise<unknown>;
 }
 
@@ -176,6 +137,7 @@ export async function runLiveValidation(
       const readiness = await bounded(() => runner.readiness({ host, model, os }, signal), signal).catch(() => "runner-unavailable");
       if (readiness !== "ready") unavailable = signal.aborted ? interruption()
         : readiness === "credentials-unavailable" ? "The installed host credentials are unavailable."
+        : readiness === "authorization-required" ? "Paid benchmark execution was not explicitly authorized."
         : "The installed-host runner is unavailable.";
     }
 
@@ -190,7 +152,7 @@ export async function runLiveValidation(
       }
       try {
         const value = await bounded(() => runner.run({
-          host, model, os, attempt: attempt.attempt, tokenLimit: remaining, baseline,
+          host, model, os, attempt: attempt.attempt, tokenLimit: remaining, baseline, baselineRef: input.baselineRef,
         }, signal), signal);
         const observed = observedResult(value, input);
         attempt.outcome = observed.outcome;

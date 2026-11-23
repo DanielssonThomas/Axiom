@@ -67,6 +67,12 @@ importers:
         specifier: 1.2.19
         version: 1.2.19
 
+  evals/graders:
+    dependencies:
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+
   packages/benchmark:
     dependencies:
       '@axiom/contracts':
@@ -90,6 +96,15 @@ importers:
       '@axiom/benchmark':
         specifier: workspace:*
         version: link:../benchmark
+      '@axiom/bundles':
+        specifier: workspace:*
+        version: link:../bundles
+      '@axiom/claude-adapter':
+        specifier: workspace:*
+        version: link:../../adapters/claude
+      '@axiom/codex-adapter':
+        specifier: workspace:*
+        version: link:../../adapters/codex
       '@axiom/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -99,6 +114,12 @@ importers:
       '@axiom/evidence':
         specifier: workspace:*
         version: link:../evidence
+      '@axiom/graders':
+        specifier: workspace:*
+        version: link:../../evals/graders
+      '@axiom/hermes-adapter':
+        specifier: workspace:*
+        version: link:../../adapters/hermes
       '@axiom/verification':
         specifier: workspace:*
         version: link:../verification
