@@ -36,6 +36,15 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
 
+  packages/policy:
+    dependencies:
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+
 packages:
 
   '@emnapi/core@2.0.0-beta.2':
