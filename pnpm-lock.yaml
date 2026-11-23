@@ -50,6 +50,10 @@ importers:
       yaml:
         specifier: 2.9.1
         version: 2.9.1
+    devDependencies:
+      rolldown:
+        specifier: 1.2.19
+        version: 1.2.19
 
   packages/benchmark:
     dependencies:
