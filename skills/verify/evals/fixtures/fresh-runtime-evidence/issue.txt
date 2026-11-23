@@ -1,0 +1,3 @@
+Verify that opening the filter panel and selecting Active leaves only active rows visible.
+Required evidence covers the repository's filter unit tests and the panel behavior in the running browser.
+The output must retain a truthful status and reason for each check.
