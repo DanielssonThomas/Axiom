@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 export const workerBriefKey = "AXIOM_CLAUDE_WORKER_BRIEF";
 export const runtimeFile = "axiom-runtime.json";
 export const corePolicyPath = "core/AXIOMS.md";
+export const workerIdentityMarker = "\n\nAxiom native worker identity: ";
 export const workerBriefMarker = "\n\nAxiom scoped worker brief: ";
 
 export function policyPaths(policy: PolicyIdentity): readonly string[] {
@@ -54,11 +55,11 @@ async function pluginFile(plugin: string, path: string): Promise<Buffer> {
   return readFile(real);
 }
 
-function parseWorker(raw: string | undefined, policy: PolicyIdentity): TaskBrief | undefined {
+export function parseWorkerBrief(raw: string | undefined): TaskBrief | undefined {
   if (!raw) return;
   try {
     const brief = taskBriefSchema.parse(JSON.parse(raw));
-    if (brief.parentId && isDeepStrictEqual(brief.policy, policy)) return brief;
+    if (brief.parentId) return brief;
   } catch { /* Invalid transport is a blocked worker requirement. */ }
 }
 
@@ -95,16 +96,19 @@ export async function runClaudeHook(
       const bytes = await pluginFile(plugin, path).catch(() => undefined);
       return { path, expected, digest: bytes && sha256(bytes), bytes };
     }));
-    const workerTask = event === "SubagentStart" ? parseWorker(worker, policy) : undefined;
+    const brief = event === "SubagentStart" ? parseWorkerBrief(worker) : undefined;
+    const workerTask = brief && isDeepStrictEqual(brief.policy, policy) ? brief : undefined;
+    const agentId = event === "SubagentStart" && typeof input.agent_id === "string" ? input.agent_id.trim() : "";
     let outcome: EvidenceOutcome = { status: "passed" };
     if (observed.some((file) => file.digest !== file.expected)) {
       outcome = { status: "failed", reason: "The installed native bundle failed its integrity check." };
-    } else if (event === "SubagentStart" && (!workerTask || typeof input.agent_id !== "string" || !input.agent_id.trim())) {
+    } else if (event === "SubagentStart" && (!workerTask || !agentId)) {
       outcome = { status: "blocked", reason: "An applicable native worker brief or observed worker identity was missing." };
     }
     const policyText = observed.find(({ path }) => path === section)?.bytes?.toString();
     if (!policyText?.trim()) outcome = { status: "failed", reason: "The installed policy document is incomplete." };
     const context = `Axiom policy digest: ${policy.digest}\nAxiom policy section: ${section}\n\n${policyText ?? ""}`
+      + (agentId ? workerIdentityMarker + JSON.stringify(agentId) : "")
       + (workerTask && section === corePolicyPath ? workerBriefMarker + JSON.stringify(workerTask) : "");
     const output: HookOutput = { hookSpecificOutput: { hookEventName: event, additionalContext: context } };
     if (outcome.status === "passed" && JSON.stringify(output).length + 1 > 10_000) {

@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { backendRequestSchema, backendResultSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
 import { claudeVersion, invokeClaude, type ClaudeProfile } from "./process.js";
-import { sha256 } from "./runtime.js";
+import { sha256, workerBriefKey } from "./runtime.js";
 import { assessClaudeActivation, parseClaudeTrace, supportedClaudeHost } from "./trace.js";
 import type { ClaudeBundle } from "./bundle.js";
 
@@ -42,7 +42,7 @@ export async function executeClaudeSession(profile: ClaudeProfile, options: Clau
   ], options.signal, options.prompt);
   const hidden = Object.entries(profile.environment ?? {})
     .filter(([key]) => /(?:token|key|secret|pass|auth|worker.brief)/i.test(key)).map(([, value]) => value);
-  return { code, ...parseClaudeTrace(stdout, hidden) };
+  return { code, ...parseClaudeTrace(stdout, hidden, profile.environment?.[workerBriefKey]) };
 }
 
 export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBackend {

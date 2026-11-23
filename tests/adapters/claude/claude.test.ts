@@ -100,6 +100,56 @@ test("carries an explicitly staged shared brief into a native SubagentStart even
   expect(missing.output).toBeUndefined();
 });
 
+test("requires complete native policy sections and the expected brief for one observed worker", async () => {
+  const built = await buildClaudeBundle({
+    repository: process.cwd(), destination: join(root, "profiled"), version: "1.0.0", sourceRevision: "fixture",
+    policyVersion: "1", selectedProfiles: ["ui-atomic"], skills: [{ id: "context" }],
+    checks: Object.fromEntries(["ui-atomic.composition", "ui-atomic.reuse", "ui-atomic.verification"]
+      .map((id) => [id, { kind: "mechanical" }])),
+  });
+  const brief: TaskBrief = {
+    id: "worker", parentId: "parent", objective: "Verify the worker's fixture.",
+    ownedPaths: ["tests/fixture"], policy: built.manifest.policy,
+    criteria: [{ id: "confirm", description: "Verify this result.", required: true }],
+    requiredCapabilities: [], limits: { timeoutMs: 1000, maxAttempts: 1, maxConcurrency: 1 },
+  };
+  const expected = workerBriefEnvironment(brief).AXIOM_CLAUDE_WORKER_BRIEF;
+  const uiPath = "profiles/ui-atomic/PROFILE.md";
+  const hookEvent = async (event: "SessionStart" | "SubagentStart", path?: string, agent = "native-worker", worker = expected) => {
+    const result = await runClaudeHook(built.plugin, { hook_event_name: event, source: "startup", agent_id: agent }, worker, path);
+    expect(result.outcome.status).toBe("passed");
+    return { type: "system", subtype: "hook_response", exit_code: 0, outcome: "success", hook_event: event,
+      stdout: JSON.stringify(result.output) };
+  };
+  const parentEvents = [
+    { type: "system", subtype: "init", claude_code_version: host.version, model: host.model,
+      plugins: [{ source: "axiom@axiom-local" }], skills: ["axiom:context"] },
+    await hookEvent("SessionStart"), await hookEvent("SessionStart", uiPath),
+  ];
+  const core = await hookEvent("SubagentStart");
+  const ui = await hookEvent("SubagentStart", uiPath);
+  const alternateWorker = await hookEvent("SubagentStart", uiPath, "different-native-worker");
+  const unexpectedBrief = await hookEvent("SubagentStart", undefined, "native-worker",
+    workerBriefEnvironment({ ...brief, objective: "An unexpected objective." }).AXIOM_CLAUDE_WORKER_BRIEF);
+  const wrongPolicy = workerBriefEnvironment({ ...brief, policy: { ...brief.policy, version: "other" } }).AXIOM_CLAUDE_WORKER_BRIEF;
+  const wrongPolicyOutput = JSON.parse(core.stdout);
+  wrongPolicyOutput.hookSpecificOutput.additionalContext = wrongPolicyOutput.hookSpecificOutput.additionalContext.replace(expected, wrongPolicy);
+  const wrongPolicyHook = { ...core, stdout: JSON.stringify(wrongPolicyOutput) };
+  const failedWorkerHook = { type: "system", subtype: "hook_response", exit_code: 2, outcome: "error",
+    hook_event: "SubagentStart", stderr: "Axiom native hook failed: The installed native bundle failed its integrity check.\n" };
+  const assess = (hooks: unknown[], staged: string | null = expected) => {
+    const raw = [...parentEvents, ...hooks].map((event) => JSON.stringify(event)).join("\n");
+    return assessClaudeActivation(built, host, parseClaudeTrace(raw, [], staged ?? undefined).observation, ["delegation"]);
+  };
+  expect(assess([core, ui]).outcome.status).toBe("passed");
+  expect(assess([core]).outcome.status).toBe("blocked");
+  expect(assess([core, alternateWorker]).outcome.status).toBe("blocked");
+  expect(assess([unexpectedBrief, ui]).outcome.status).toBe("blocked");
+  expect(assess([core, ui], null).outcome.status).toBe("blocked");
+  expect(assess([wrongPolicyHook, ui], wrongPolicy).outcome.status).toBe("blocked");
+  expect(assess([core, ui, failedWorkerHook]).outcome.status).toBe("failed");
+});
+
 test("normalizes host events and token usage while excluding message content", () => {
   const events = [
     { type: "system", subtype: "init", claude_code_version: host.version, plugins: [{ name: "axiom", source: "axiom@axiom-local" }], skills: ["axiom:context"] },

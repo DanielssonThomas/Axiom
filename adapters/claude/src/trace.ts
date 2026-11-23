@@ -1,8 +1,16 @@
-import { capabilitySchema, digestSchema, taskBriefSchema, usageSchema, type Capability, type EvidenceOutcome, type HostIdentity, type Usage } from "@axiom/contracts";
+import { isDeepStrictEqual } from "node:util";
+import { capabilitySchema, digestSchema, usageSchema, type Capability, type EvidenceOutcome, type HostIdentity, type PolicyIdentity, type Usage } from "@axiom/contracts";
 import { pluginId, supportedVersion, type ClaudeBundle } from "./bundle.js";
-import { array, object, policyPaths, sha256, workerBriefMarker } from "./runtime.js";
+import { array, corePolicyPath, object, parseWorkerBrief, policyPaths, sha256, workerBriefMarker, workerIdentityMarker } from "./runtime.js";
 
 type Action = { kind: "read" | "edit"; path: string } | { kind: "command"; command: string };
+type HookFailure = EvidenceOutcome & { status: "failed" | "blocked" };
+interface PolicySection { policyDigest: string; path: string; digest: string }
+interface ObservedWorker {
+  agentId: string;
+  sections: PolicySection[];
+  briefs: { taskId: string; policy: PolicyIdentity; matchesStagedBrief: boolean }[];
+}
 
 export interface ClaudeSessionObservation {
   discovered: boolean;
@@ -11,25 +19,41 @@ export interface ClaudeSessionObservation {
   observedModel?: string;
   skills: string[];
   policyDigests: string[];
-  policySections: { policyDigest: string; path: string; digest: string }[];
-  startupFailure?: EvidenceOutcome & { status: "failed" | "blocked" };
-  observedWorkerIds?: string[];
+  policySections: PolicySection[];
+  startupFailure?: HookFailure;
+  workerFailure?: HookFailure;
+  workers: ObservedWorker[];
 }
 
 export function supportedClaudeHost(host: HostIdentity) {
   return host.agent === "claude" && host.os === "linux" && host.version === supportedVersion && host.surface === "cli";
 }
 
-export function claudeCapabilities(host: HostIdentity, observation?: ClaudeSessionObservation): Capability[] {
+function hasPolicySections(bundle: ClaudeBundle, sections: readonly PolicySection[]) {
+  return policyPaths(bundle.manifest.policy).every((path) => {
+    const expected = bundle.manifest.files.find((file) => file.path === bundle.manifest.runtimeRoot + path);
+    return expected !== undefined && sections.some((section) =>
+      section.path === path && section.policyDigest === bundle.manifest.policy.digest && section.digest === expected.digest);
+  });
+}
+
+export function claudeCapabilities(host: HostIdentity, observation?: ClaudeSessionObservation, bundle?: ClaudeBundle): Capability[] {
   const native = supportedClaudeHost(host);
+  const worker = observation?.workers.length === 1 ? observation.workers[0] : undefined;
+  const brief = worker?.briefs.length === 1 ? worker.briefs[0] : undefined;
+  const delegation = native && observation?.observedVersion === host.version && observation.observedModel === host.model
+    && !observation.workerFailure && bundle && worker && brief?.matchesStagedBrief
+    && isDeepStrictEqual(brief.policy, bundle.manifest.policy)
+    && worker.sections.length === policyPaths(bundle.manifest.policy).length && hasPolicySections(bundle, worker.sections);
   return [
     ...["native-package", "startup", "process-execution", "action-trace"].map((id) => capabilitySchema.parse(native
       ? { id, available: true } : { id, available: false, reason: "Unsupported Claude Code surface, version, or platform." })),
     ...["resume", "compaction", "hook-enforcement"].map((id): Capability => ({
       id, available: false, reason: `Observable ${id} coverage is unavailable on the declared Claude CLI surface.`,
     })),
-    observation?.observedWorkerIds?.length === 1 && native ? { id: "delegation", available: true } : {
-      id: "delegation", available: false, reason: "No single validated native subagent brief was observed.",
+    delegation ? { id: "delegation", available: true } : {
+      id: "delegation", available: false,
+      reason: observation?.workerFailure?.reason ?? "No single native worker received the complete requested policy and staged brief.",
     },
   ];
 }
@@ -37,13 +61,9 @@ export function claudeCapabilities(host: HostIdentity, observation?: ClaudeSessi
 export function assessClaudeActivation(
   bundle: ClaudeBundle, host: HostIdentity, observation: ClaudeSessionObservation, required: readonly string[] = [],
 ) {
-  const loading = policyPaths(bundle.manifest.policy).every((path) => {
-    const expected = bundle.manifest.files.find((file) => file.path === bundle.manifest.runtimeRoot + path);
-    return expected !== undefined && observation.policySections.some((section) =>
-      section.path === path && section.policyDigest === bundle.manifest.policy.digest && section.digest === expected.digest);
-  })
+  const loading = hasPolicySections(bundle, observation.policySections)
     && bundle.manifest.skills.every(({ id }) => observation.skills.includes(`axiom:${id}`));
-  const capabilities = claudeCapabilities(host, observation);
+  const capabilities = claudeCapabilities(host, observation, bundle);
   const missing = required.find((id) => !capabilities.some((capability) => capability.id === id && capability.available));
   let outcome: EvidenceOutcome = { status: "passed" };
   if (!supportedClaudeHost(host) || observation.observedVersion !== host.version || observation.observedModel !== host.model) {
@@ -52,6 +72,8 @@ export function assessClaudeActivation(
     outcome = observation.startupFailure;
   } else if (!observation.discovered || !observation.selected || !loading) {
     outcome = { status: "blocked", reason: "Claude plugin discovery, selection, or context loading was not observed." };
+  } else if (required.includes("delegation") && observation.workerFailure) {
+    outcome = observation.workerFailure;
   } else if (missing) {
     outcome = { status: "blocked", reason: `The required Claude capability is unavailable: ${missing}.` };
   }
@@ -66,12 +88,14 @@ function readHookContext(raw: unknown) {
   } catch { /* Other native hooks can return plain stdout. */ }
 }
 
-export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[] = []) {
+export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[] = [], stagedWorkerBrief?: string) {
   const actions: Action[] = [];
   const pendingTools = new Map<string, Action>();
   const observation: ClaudeSessionObservation = {
-    discovered: false, selected: false, skills: [], policyDigests: [], policySections: [], observedWorkerIds: [],
+    discovered: false, selected: false, skills: [], policyDigests: [], policySections: [], workers: [],
   };
+  const expectedWorker = parseWorkerBrief(stagedWorkerBrief);
+  const workers = new Map<string, ObservedWorker>();
   let outcome: EvidenceOutcome = { status: "blocked", reason: "No completed Claude Code result was observed." };
   let usage: Usage = { metering: "unknown", reason: "Claude Code did not report validated usage." };
   const redact = (text: string) => sensitiveValues.filter(Boolean).reduce((value, secret) => value.replaceAll(secret, "[REDACTED]"), text);
@@ -89,10 +113,12 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
       if (typeof event.model === "string") observation.observedModel = event.model;
     } else if (event.type === "system" && event.subtype === "hook_response") {
       if (event.exit_code !== 0 || event.outcome !== "success") {
-        if (event.hook_event === "SessionStart" && typeof event.stderr === "string") {
+        const stage = event.hook_event === "SessionStart" ? "startupFailure"
+          : event.hook_event === "SubagentStart" ? "workerFailure" : undefined;
+        if (stage && typeof event.stderr === "string") {
           const [, status, reason] = /^Axiom native hook (failed|blocked): ([^\r\n]+)/.exec(event.stderr) ?? [];
-          if ((status === "failed" || status === "blocked") && reason && observation.startupFailure?.status !== "failed") {
-            observation.startupFailure = { status, reason: redact(reason) };
+          if ((status === "failed" || status === "blocked") && reason && observation[stage]?.status !== "failed") {
+            observation[stage] = { status, reason: redact(reason) };
           }
         }
         continue;
@@ -107,12 +133,25 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
         observation.policySections.push({ policyDigest: digest, path, digest: sha256(context.slice(header.length)) });
       }
       if (event.hook_event === "SubagentStart" && output?.hookEventName === "SubagentStart") {
-        const briefStart = context.lastIndexOf(workerBriefMarker);
-        if (briefStart >= header.length) {
-          try {
-            const parsed = taskBriefSchema.safeParse(JSON.parse(context.slice(briefStart + workerBriefMarker.length)));
-            if (parsed.success && parsed.data.parentId && parsed.data.policy.digest === digest) observation.observedWorkerIds!.push(parsed.data.id);
-          } catch { /* A malformed worker observation remains unavailable. */ }
+        const identityStart = context.lastIndexOf(workerIdentityMarker);
+        if (identityStart < header.length) continue;
+        const briefStart = context.indexOf(workerBriefMarker, identityStart + workerIdentityMarker.length);
+        let agentId: unknown;
+        try {
+          agentId = JSON.parse(context.slice(identityStart + workerIdentityMarker.length, briefStart < 0 ? undefined : briefStart));
+        } catch { continue; }
+        if (typeof agentId !== "string" || !agentId.trim()) continue;
+        let worker = workers.get(agentId);
+        if (!worker) {
+          worker = { agentId, sections: [], briefs: [] };
+          workers.set(agentId, worker);
+          observation.workers.push(worker);
+        }
+        worker.sections.push({ policyDigest: digest, path, digest: sha256(context.slice(header.length, identityStart)) });
+        const brief = path === corePolicyPath && briefStart >= 0
+          ? parseWorkerBrief(context.slice(briefStart + workerBriefMarker.length)) : undefined;
+        if (brief) {
+          worker.briefs.push({ taskId: brief.id, policy: brief.policy, matchesStagedBrief: isDeepStrictEqual(brief, expectedWorker) });
         }
       }
     } else if (event.type === "assistant") {

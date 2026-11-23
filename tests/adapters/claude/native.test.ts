@@ -27,6 +27,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
   let sawInheritedProfiles = false;
   let offerDelegation = false;
   let sawWorkerBrief = false;
+  let sawWorkerProfiles = false;
   const server = createServer((request, response) => {
     let body = "";
     request.setEncoding("utf8");
@@ -38,6 +39,8 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
       sawInheritedProfiles = body.includes("# Axiom Core")
         && body.includes("# Atomic UI profile") && body.includes("# Angular and Nx profile");
       sawWorkerBrief ||= body.includes("Axiom scoped worker brief:") && body.includes("worker-native");
+      sawWorkerProfiles ||= body.includes("Axiom scoped worker brief:")
+        && body.includes("worker-profiled") && sawInheritedProfiles;
       const sendDelegate = offerDelegation;
       offerDelegation = false;
       const toolInput = {
@@ -129,16 +132,19 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     expect(received).toBe(4);
 
     offerDelegation = true;
-    const worker = workerBriefEnvironment({
+    const taskBrief = {
       id: "worker-native", parentId: "parent-native", objective: "Confirm the worker fixture.",
       ownedPaths: ["fixture"], policy: first.manifest.policy,
       criteria: [{ id: "worker-check", description: "Confirm worker context.", required: true }],
       requiredCapabilities: [], limits: { timeoutMs: 1000, maxAttempts: 1, maxConcurrency: 1 },
-    });
+    };
+    const worker = workerBriefEnvironment(taskBrief);
     const delegated = await executeClaudeSession({ ...profile, environment: { ...environment, ...worker } }, {
       ...options, bundle: first, prompt: "Create one fixture worker.",
     });
-    expect(delegated.observation.observedWorkerIds).toContain("worker-native");
+    expect(delegated.observation.workers).toMatchObject([{
+      agentId: expect.any(String), briefs: [{ taskId: "worker-native", matchesStagedBrief: true }],
+    }]);
     expect(assessClaudeActivation(first, host, delegated.observation, ["delegation"]).outcome.status).toBe("passed");
     expect(sawWorkerBrief).toBe(true);
 
@@ -160,6 +166,14 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     const profiled = await executeClaudeSession(profile, options);
     expect(assessClaudeActivation(profiles, host, profiled.observation).outcome.status).toBe("passed");
     expect(sawInheritedProfiles).toBe(true);
+
+    offerDelegation = true;
+    const profileWorker = workerBriefEnvironment({ ...taskBrief, id: "worker-profiled", policy: profiles.manifest.policy });
+    const profiledDelegation = await executeClaudeSession({ ...profile, environment: { ...environment, ...profileWorker } }, {
+      ...options, prompt: "Create one fixture worker.",
+    });
+    expect(assessClaudeActivation(profiles, host, profiledDelegation.observation, ["delegation"]).outcome.status).toBe("passed");
+    expect(sawWorkerProfiles).toBe(true);
   } finally {
     if (server.listening) {
       server.closeAllConnections();
