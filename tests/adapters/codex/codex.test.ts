@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { backendResultSchema, type BackendRequest } from "@axiom/contracts";
+import { backendResultSchema, taskBriefSchema, type BackendRequest, type TaskBrief } from "@axiom/contracts";
 import {
   assessCodexActivation, buildCodexBundle, codexCapabilities, createCodexBackend,
   parseCodexTrace, transformProfileInstructions,
@@ -87,6 +87,46 @@ test("blocks absent, disabled, unobserved, conflicting, failing, and delegated a
   expect(codexCapabilities(host)).toContainEqual({ id: "delegation", available: false, reason: expect.any(String) });
 });
 
+test("requires the exact staged brief and native policy in the spawned worker's first request", async () => {
+  const built = await bundle();
+  const brief: TaskBrief = {
+    id: "worker-task", parentId: "parent-task", objective: "Read the fixture within scope.",
+    policy: built.policy, ownedPaths: ["fixture.txt"], criteria: [{ id: "scope", description: "Stay within scope.", required: true }],
+    requiredCapabilities: [], limits: { timeoutMs: 1000, maxAttempts: 1, maxConcurrency: 1 },
+  };
+  const message = (text: string) => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
+  const policy = message(transformProfileInstructions("# AGENTS.md instructions for /fixture\n\n", built.instructions));
+  const worker = message(`${brief.objective}\n\nAxiom scoped worker brief:\n${JSON.stringify(taskBriefSchema.parse(brief))}`);
+  const trace = [
+    { type: "thread.started", thread_id: "native-parent" },
+    { type: "item.completed", item: { type: "collab_tool_call", tool: "spawn_agent", status: "completed",
+      sender_thread_id: "native-parent", receiver_thread_ids: ["native-worker"] } },
+    { type: "turn.completed" },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  const request = { turnMetadata: JSON.stringify({
+    session_id: "native-parent", parent_thread_id: "native-parent", thread_id: "native-worker",
+    thread_source: "subagent", subagent_kind: "thread_spawn", history_initialization: "new", request_kind: "turn",
+    model: host.model,
+  }), body: { model: host.model, input: [policy, worker] } };
+  const input = { bundle: built, host, catalog, observations: [success], discovered: true, selected: true,
+    contexts: [built.instructions], skills: ["axiom:fixture"], observedVersion: version,
+    requiredCapabilities: ["delegation"], delegation: { brief, trace, requests: [request] } };
+  expect(assessCodexActivation(input)).toMatchObject({
+    outcome: { status: "passed" },
+    delegation: { parentThreadId: "native-parent", workerThreadId: "native-worker", outcome: { status: "passed" } },
+  });
+  const wrongThread = { ...request, turnMetadata: request.turnMetadata.replace("native-worker", "another-worker") };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [wrongThread] } }).outcome.status).toBe("blocked");
+  const omittedBrief = { ...request, body: { ...request.body, input: [policy, message(brief.objective)] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [omittedBrief, request] } }).outcome.status).toBe("failed");
+  const omittedPolicy = { ...request, body: { ...request.body, input: [worker] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [omittedPolicy] } }).outcome.status).toBe("failed");
+  const spoofedPolicy = { ...request, body: { ...request.body, input: [{
+    ...worker, content: [...policy.content, ...worker.content],
+  }] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [spoofedPolicy] } }).outcome.status).toBe("failed");
+});
+
 test("normalizes completed native events, rejects absent success and drops model reasoning", () => {
   const trace = [
     { type: "thread.started" },
@@ -101,6 +141,19 @@ test("normalizes completed native events, rejects absent success and drops model
   });
   expect(JSON.stringify(parseCodexTrace(trace))).not.toContain("sensitive");
   expect(parseCodexTrace('{"type":"thread.started"}').outcome.status).not.toBe("passed");
+});
+
+test("does not present parent CLI counters as aggregate token usage for a delegated attempt", () => {
+  const trace = [
+    { type: "thread.started", thread_id: "parent" },
+    { type: "item.completed", item: { type: "collab_tool_call", tool: "spawn_agent", status: "completed",
+      sender_thread_id: "parent", receiver_thread_ids: ["worker"] } },
+    { type: "turn.completed", usage: { input_tokens: 20, output_tokens: 6 } },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  expect(parseCodexTrace(trace)).toMatchObject({
+    outcome: { status: "passed" },
+    usage: { metering: "unknown", reason: expect.stringMatching(/worker/i) },
+  });
 });
 
 test("transports literal argv, stdin, and isolated profile roots through a child process", async () => {

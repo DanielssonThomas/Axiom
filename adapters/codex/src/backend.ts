@@ -22,6 +22,7 @@ export function parseCodexTrace(output: string, sensitiveValues: readonly string
   const actions: NormalizedAction[] = [];
   let usage: Usage = { metering: "unknown", reason: "Codex did not report validated token usage." };
   let outcome: EvidenceOutcome = { status: "blocked", reason: "No complete Codex turn was observed." };
+  let workerObserved = false;
   const redact = (text: string) => sensitiveValues.filter(Boolean).reduce((value, secret) => value.replaceAll(secret, "[REDACTED]"), text);
   for (const line of output.split("\n")) {
     if (!line.trim()) continue;
@@ -40,7 +41,9 @@ export function parseCodexTrace(output: string, sensitiveValues: readonly string
       outcome = { status: "blocked", reason: "The native Codex turn failed before completing execution." };
     } else if (event.type === "item.completed") {
       const item = object(event.item);
-      if (item.type === "command_execution" && typeof item.command === "string") {
+      if (item.type === "collab_tool_call" && array(item.receiver_thread_ids).length > 0) {
+        workerObserved = true;
+      } else if (item.type === "command_execution" && typeof item.command === "string") {
         actions.push({
           kind: "command", command: redact(item.command),
           ...(Number.isSafeInteger(item.exit_code) ? { exitCode: item.exit_code as number } : {}),
@@ -54,6 +57,7 @@ export function parseCodexTrace(output: string, sensitiveValues: readonly string
       }
     }
   }
+  if (workerObserved) usage = { metering: "unknown", reason: "Codex parent counters do not include native worker token usage." };
   return { outcome, actions, usage };
 }
 
