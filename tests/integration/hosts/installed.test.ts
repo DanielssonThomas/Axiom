@@ -246,12 +246,14 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture> {
     baseUrl: loopback.endpoint + "/v1", environment,
   });
   let sequence = 0;
-  const session = async (enabled: boolean, policy = first.manifest.policy) => {
-    const result = await backend.run({
+  const runSession = (enabled: boolean, policy: PolicyIdentity) =>
+    backend.run({
       id: `installed-session-${++sequence}`, caseId: "native-transport", workspace, host,
       policy, prompt: ordinaryPrompt, mode: enabled ? "with_axiom" : "without_axiom", timeoutMs: 24_000,
     }, signal);
-    expect(result.host).toEqual(host);
+  const session = async (enabled: boolean) => {
+    const result = await runSession(enabled, first.manifest.policy);
+    expect(result.host, JSON.stringify(result.outcome)).toEqual(host);
     return result.outcome;
   };
   return {
@@ -296,10 +298,12 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture> {
       const profiled = build("0.1.2", ["angular-nx"]);
       expect(hermes.changeHermesPlugin(target, { kind: "install", bundle: profiled.directory }).outcome).toEqual(passed);
       try {
-        const result = await session(true, profiled.manifest.policy);
-        expect(result.status).toBe("blocked");
+        const result = await runSession(true, profiled.manifest.policy);
+        expect(result.outcome.status).toBe("blocked");
         const { loaded } = hermes.inspectHermesActivation(target);
-        expect(loaded).toMatchObject({ status: "blocked", reason: expect.stringContaining("aggregate prompt-section limit") });
+        expect(loaded, JSON.stringify(result.outcome)).toMatchObject({
+          status: "blocked", reason: expect.stringContaining("aggregate prompt-section limit"),
+        });
         return loaded;
       } finally {
         expect(hermes.changeHermesPlugin(target, { kind: "uninstall" }).outcome).toEqual(passed);
