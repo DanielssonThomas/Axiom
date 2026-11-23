@@ -131,7 +131,7 @@ test("launches the native bounded benchmark command, resolves traces in the shar
     policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
   };
   if (process.platform !== "linux") {
-    expect(await backend.run(request, new AbortController().signal)).toMatchObject({
+    expect(await backend.run({ ...request, host: { ...host, os: process.platform } }, new AbortController().signal)).toMatchObject({
       outcome: { status: "blocked", reason: expect.stringMatching(/unsupported/i) }, artifacts: [],
     });
     return;
@@ -172,7 +172,7 @@ test("stops subprocess work when a launched benchmark reaches its deadline", asy
     policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
   };
   if (process.platform !== "linux") {
-    expect(await backend.run(request, new AbortController().signal)).toMatchObject({
+    expect(await backend.run({ ...request, host: { ...host, os: process.platform } }, new AbortController().signal)).toMatchObject({
       outcome: { status: "blocked", reason: expect.stringMatching(/unsupported/i) },
     });
     return;
