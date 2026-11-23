@@ -1,0 +1,2 @@
+Update the project workflow after reviewing the attached handoff.
+WORKFLOW.md owns the local verification command. The update is scoped to this repository.

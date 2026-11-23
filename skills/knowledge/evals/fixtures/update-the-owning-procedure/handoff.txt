@@ -1,0 +1,4 @@
+Observed two runs of node --test tests/label.test.mjs from the project root. Both passed.
+The verified source moved the test to tests/label.test.mjs. The old path no longer exists.
+A maintainer proposed a timeout explanation for a separate intermittent failure.
+Timeout hypothesis: not reproduced. Keep it in the task notes pending evidence.
