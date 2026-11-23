@@ -61,6 +61,7 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
 
     let requests = 0;
     let workerMessage: string | undefined;
+    let spawnCall: string | undefined;
     const providerRequests: CodexProviderObservation[] = [];
     const server = createServer(async (incoming, outgoing) => {
       try {
@@ -75,14 +76,30 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
         providerRequests.push({ turnMetadata: incoming.headers["x-codex-turn-metadata"], body });
         requests += 1;
         const id = `msg-fixture-${requests}`;
-        const message = workerMessage === undefined ? {
+        let action: { name: string; call_id: string; arguments: string } | undefined;
+        if (workerMessage !== undefined) {
+          spawnCall = `call-worker-${requests}`;
+          action = { name: "spawn_agent", call_id: spawnCall, arguments: JSON.stringify({ message: workerMessage, fork_context: false }) };
+          workerMessage = undefined;
+        } else if (spawnCall) {
+          const spawnResult = body.input?.find((item: { type: string; call_id?: string }) =>
+            item.type === "function_call_output" && item.call_id === spawnCall);
+          if (spawnResult) {
+            const { agent_id } = JSON.parse(spawnResult.output);
+            if (typeof agent_id !== "string") throw new Error("Missing native Codex worker ID.");
+            action = {
+              name: "wait_agent", call_id: `call-wait-${requests}`,
+              arguments: JSON.stringify({ targets: [agent_id], timeout_ms: 5000 }),
+            };
+            spawnCall = undefined;
+          }
+        }
+        const message = action === undefined ? {
           id, type: "message", role: "assistant",
           content: [{ type: "output_text", text: "Fixture completed.", annotations: [] }], status: "completed",
         } : {
-          id, type: "function_call", namespace: "multi_agent_v1", name: "spawn_agent", status: "completed",
-          call_id: `call-worker-${requests}`, arguments: JSON.stringify({ message: workerMessage, fork_context: false }),
+          id, type: "function_call", namespace: "multi_agent_v1", status: "completed", ...action,
         };
-        workerMessage = undefined;
         const events = [
           { type: "response.created", response: { id } },
           { type: "response.output_item.added", item: message, output_index: 0 },
@@ -132,6 +149,7 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
           "--skip-git-repo-check", "--color", "never", "--json", "--model", host.model, "-",
         ], { input: "Launch one read-only worker.", signal: AbortSignal.timeout(10_000) });
         expect(run.code).toBe(0);
+        expect(spawnCall).toBeUndefined();
         expect(parseCodexTrace(run.stdout).usage).toMatchObject({ metering: "unknown", reason: expect.stringMatching(/worker/i) });
         return assessCodexActivation({
           ...observation, bundle: later, host, catalog, observations: [], requiredCapabilities: ["delegation"],
