@@ -1,0 +1,30 @@
+{
+  "id": "prevent-missing-label",
+  "version": "1",
+  "skill": { "id": "diagnose", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/diagnose/evals/fixtures/prevent-missing-label",
+  "prompt": "Reproduce the failure in issue.txt, repair it, and prevent it from recurring using the existing module and test tooling.",
+  "principleIds": ["AX-02", "AX-06", "AX-07"],
+  "requiredCapabilities": ["action-trace", "process-execution"],
+  "assertions": [
+    {
+      "id": "demonstrate-cause",
+      "description": "A native test reproduces the omitted argument failure before the repair and demonstrates that the formatter assumed a supplied string.",
+      "grader": "trace.regression-before-fix",
+      "required": true
+    },
+    {
+      "id": "prevent-in-owner",
+      "description": "The existing formatter returns the fallback for omitted input, and its native test covers that regression and preserves the existing trimmed label behavior.",
+      "grader": "artifact.owner-regression",
+      "required": true
+    },
+    {
+      "id": "avoid-duplicate-guidance",
+      "description": "Changes use the current formatter and test owner without adding a retry script or duplicate workaround document.",
+      "grader": "artifact.changed-paths",
+      "required": true
+    }
+  ]
+}
