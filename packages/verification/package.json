@@ -12,6 +12,10 @@
   "files": ["dist/*.js", "dist/*.d.ts"],
   "dependencies": {
     "@axiom/contracts": "workspace:*",
-    "@axiom/evidence": "workspace:*"
+    "@axiom/evidence": "workspace:*",
+    "cross-spawn": "7.0.6"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6"
   }
 }
