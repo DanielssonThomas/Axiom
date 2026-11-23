@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,6 +67,34 @@ test("doctor distinguishes fresh native loading from changed installed instructi
   writeFileSync(join(root, selected.path), "Changed instructions");
   expect(run("doctor", "--request", path)).toMatchObject({ code: 1, output: { status: "failed", report: {
     sources: [{ installed: { status: "passed" }, loaded: { status: "blocked" } }],
+  } } });
+});
+
+test("check runs a documented repository command and reports its observed failure", () => {
+  const root = directory();
+  const evidenceDirectory = directory();
+  execFileSync("git", ["init", "--quiet", root]);
+  const path = join(root, "request.mjs");
+  const task = {
+    id: "request-check", objective: "Run the documented command.", ownedPaths: ["check.cjs"],
+    policy: { version: "1", digest: digest("policy"), profiles: [] }, requiredCapabilities: [],
+    criteria: [{ id: "script", description: "The documented check passes.", required: true }],
+    limits: { timeoutMs: 5000, maxAttempts: 1, maxConcurrency: 1 },
+  };
+  const requirements = [{
+    id: "script", criterionId: "script", kind: "automated",
+    command: { docs: [{ path: "README.md", heading: "Checks" }] },
+  }];
+  writeFileSync(path, "export const check = " + JSON.stringify({ root, evidenceDirectory, task, requirements }));
+  writeFileSync(join(root, "README.md"), "## Checks\n\n```sh\nnode check.cjs\n```\n");
+  writeFileSync(join(root, "check.cjs"), "process.exitCode = 0;\n");
+  expect(run("check", "--request", path)).toMatchObject({ code: 0, output: { status: "passed", report: {
+    conforms: true, checks: [{ evidenceId: expect.any(String), outcome: { status: "passed" } }],
+  } } });
+
+  writeFileSync(join(root, "check.cjs"), "process.exitCode = 7;\n");
+  expect(run("check", "--request", path)).toMatchObject({ code: 1, output: { status: "failed", report: {
+    conforms: false, checks: [{ evidenceId: expect.any(String), outcome: { status: "failed" } }],
   } } });
 });
 
