@@ -1,6 +1,6 @@
 # Architecture
 
-**Status: planned.** This document describes the intended implementation. Repository presence, package metadata, and this plan do not establish working capabilities or platform support.
+**Status: foundation implemented.** The workspace exports the shared contracts and runs the CLI skeleton. The remaining sections describe v1 implementation and verification requirements.
 
 Axiom connects a principle to an applicable workflow, an observable check, evidence, and a truthful completion status. It provides a reusable engineering foundation through native agent integrations, not a new agent runtime.
 
@@ -54,13 +54,36 @@ Use existing libraries, native packaging, framework generators, and repository t
 
 A collection is a cohesive feature composition, not automatically another atomic layer. A component directory does not require a separate build library. Private local types need not become public interfaces, and similar DTO/domain/view-model shapes do not imply a single contract.
 
-## Planned CLI responsibilities
+## Workspace contracts
 
-These names describe intended interfaces; they are not installation or working-command instructions:
+Import runtime schemas and their inferred TypeScript types from `@axiom/contracts`. Declare it as a `workspace:*` dependency and keep new package builds ordered after their dependencies. The integration owner coordinates changes to shared contracts, central exports, CLI wiring, root configuration and manifests, and the lockfile.
+
+| Contract | Responsibility |
+| --- | --- |
+| `principleIdSchema`, `policyDefinitionSchema`, `profileDefinitionSchema`, `policyIdentitySchema` | Validate identifier formats, versioned definitions and references, and the effective policy digest. Core prose remains canonical. The policy resolver checks references, applicability, and conflicts. |
+| `capabilitySchema`, `hostIdentitySchema` | Describe capability availability and identify agent version, model, OS, and surface. An unavailable capability includes a reason such as `unsupported`. |
+| `taskBriefSchema` | Carry task lineage, objective, owned paths, policy identity, acceptance criteria, required capabilities, and execution limits. |
+| `evaluationCaseSchema` | Define a versioned fixture, task prompt, applicable principles and profiles, and observable assertions with grader references. |
+| `backendRequestSchema`, `backendResultSchema`, `BenchmarkBackend` | Pass staged execution inputs to an abortable backend, then return execution outcome, duration, observed host if available, artifact references, and usage or its absence. The benchmark owns grading and keeps assertions and expected outputs out of backend requests. |
+| `evidenceSchema`, `evidenceOutcomeSchema`, `resultStatusSchema` | Record criterion and source identity, observation provenance, timing, optional command invocation, and artifacts. Outcomes use the five core statuses. Every non-passing outcome includes a reason. |
+
+Digests use `sha256:` followed by 64 lowercase hexadecimal digits. Runtime schemas validate record shape and local invariants. Evidence consumers establish coverage, freshness, and conformance.
+
+## CLI
+
+Run `node packages/cli/dist/index.js <command>` after `pnpm build`. The CLI recognizes the following commands:
 
 - `doctor`: identify installed versions, active policy/profile sources, skill discovery, hook coverage, and unsupported capabilities.
 - `check`: run applicable deterministic checks and selected repository-native verification, with evidence for the assessed scope.
 - `benchmark`: execute versioned behavioral cases through actual host backends; the requested `--benchmark <agent>` form is an alias.
+
+Both benchmark forms emit the same result with `command: "benchmark"` and the requested `agent` identifier. Every invocation emits one JSON object to stdout.
+
+| Exit code | JSON output |
+| --- | --- |
+| `0` | Reserved for successful execution with `status: "passed"`. |
+| `1` | Unsuccessful operation. The skeleton emits `command`, `status: "not_run"`, and `reason`, plus `agent` for benchmark. |
+| `2` | Invalid invocation. The object includes `status: "failed"` and a usage `reason`. |
 
 Unsupported capabilities produce explicit gaps. Installation alone does not establish instruction activation, successful skill triggering, or enforcement.
 
