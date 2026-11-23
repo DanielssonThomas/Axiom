@@ -59,7 +59,9 @@ export function parseCodexTrace(output: string, sensitiveValues: readonly string
 
 export interface CodexBackendOptions {
   program: string;
-  /** A result storage directory outside the disposable model workspace. */
+  /** The shared EvidenceStore archive root, outside the disposable model workspace.
+   * Returned artifact locations are relative to this directory.
+   */
   artifacts: string;
   bundle?: CodexBundle;
   /** An explicitly vetted provider configuration, used unchanged in each trial. */
@@ -133,10 +135,10 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       await mkdir(artifactsRoot, { recursive: true, mode: 0o700 });
       const storage = await realpath(artifactsRoot);
       if (inside(workspace, storage)) return result({ status: "blocked", reason: "Codex artifacts resolve into the disposable workspace." });
-      const path = join(storage, `${request.id}.${randomUUID()}.json`);
+      const location = `${request.id}.${randomUUID()}.json`;
       const serialized = JSON.stringify({ actions: trace.actions }) + "\n";
-      await writeFile(path, serialized, { flag: "wx", mode: 0o600 });
-      artifacts.push({ kind: "action-trace", location: path, digest: digest(serialized) });
+      await writeFile(join(storage, location), serialized, { flag: "wx", mode: 0o600 });
+      artifacts.push({ kind: "action-trace", location, digest: digest(serialized) });
       if (execution.code !== 0) return result({ status: "blocked", reason: "The native Codex CLI exited before completing the attempt." });
       return result(trace.outcome);
     } catch {

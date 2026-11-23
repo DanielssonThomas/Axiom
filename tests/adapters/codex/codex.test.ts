@@ -7,6 +7,7 @@ import {
   assessCodexActivation, buildCodexBundle, codexCapabilities, createCodexBackend,
   parseCodexTrace, transformProfileInstructions,
 } from "../../../adapters/codex/src/index.js";
+import { EvidenceStore } from "../../../packages/evidence/src/index.js";
 
 let root: string;
 const core = { path: "core/AXIOMS.md", version: "1", text: "# Core\n\n## AX-04 — Verify the requested outcome\n\nUse observed checks.\n" };
@@ -129,6 +130,8 @@ test("executes documented Codex argv with a staged profile and blocks cancellati
   const result = backendResultSchema.parse(await backend.run(request, new AbortController().signal));
   expect(result).toMatchObject({ outcome: { status: "passed" }, usage: { metering: "reported", inputTokens: 1 } });
   expect(result.artifacts).toContainEqual(expect.objectContaining({ kind: "action-trace" }));
+  const trace = result.artifacts.find(({ kind }) => kind === "action-trace")!;
+  expect(await new EvidenceStore(join(root, "artifacts")).artifact({ kind: trace.kind, path: trace.location })).toEqual(trace);
   const stopped = await backend.run({ ...request, id: "try-two", prompt: "wait", timeoutMs: 250 }, new AbortController().signal);
   expect(stopped.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/time limit/i) });
   const cancelled = await backend.run({ ...request, id: "try-three" }, AbortSignal.abort());

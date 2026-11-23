@@ -6,6 +6,7 @@ import { expect, test } from "vitest";
 import {
   buildCodexBundle, configureCodexProfile, createCodexBackend, observeCodexProfile, supportedVersion,
 } from "../../../adapters/codex/src/index.js";
+import { EvidenceStore } from "../../../packages/evidence/src/index.js";
 
 const executable = process.env.AXIOM_TEST_CODEX_BINARY;
 
@@ -91,6 +92,8 @@ test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle a
         outcome: { status: "passed" }, usage: { metering: "reported", inputTokens: 10, outputTokens: 3 },
         artifacts: [expect.objectContaining({ kind: "action-trace" })],
       });
+      const trace = result.artifacts[0]!;
+      expect(await new EvidenceStore(join(root, "artifacts")).artifact({ kind: trace.kind, path: trace.location })).toEqual(trace);
       expect(requests).toBe(1);
     } finally {
       server.closeAllConnections();
