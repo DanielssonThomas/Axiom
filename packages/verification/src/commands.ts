@@ -137,7 +137,7 @@ function configuration(contents: string): { scripts?: Record<string, unknown>; p
   }
 }
 
-async function fromScript(root: string, cwd: string, script: NonNullable<CommandSource["script"]>, sources: CommandAuthority[]): Promise<string[]> {
+async function fromScript(root: string, cwd: string, script: NonNullable<CommandSource["script"]>, sources: CommandAuthority[]) {
   const path = repositoryPath(root, resolve(cwd, "package.json"));
   const local = await authority(root, path);
   sources.push(local.source);
@@ -169,20 +169,25 @@ async function fromScript(root: string, cwd: string, script: NonNullable<Command
   if (managers.size > 1) throw new ResolutionError("Repository configuration declares conflicting package managers.");
   const [manager] = managers;
   if (!manager || !packageManagers.includes(manager)) throw new ResolutionError("The repository package manager could not be resolved.");
-  return [manager, "run", script.name, ...script.args ?? []];
+  return { args: [manager, "run", script.name, ...script.args ?? []], scripts: config.scripts };
 }
 
 function commandName(executable: string): string {
   return basename(executable).replace(/\.(?:exe|cmd)$/i, "").toLowerCase();
 }
 
+function wrappedCommand(args: string[]): string[] | undefined {
+  const subcommand = args[1];
+  if (packageManagers.includes(commandName(args[0]!)) && subcommand && ["exec", "dlx", "x"].includes(subcommand)) {
+    return args.slice(args[2] === "--" ? 3 : 2);
+  }
+}
+
 function validateInvocation(kind: VerificationKind, args: string[]): void {
   const executable = commandName(args[0]!);
   const subcommand = args[1];
-  if (packageManagers.includes(executable) && subcommand && ["exec", "dlx", "x"].includes(subcommand)) {
-    const nested = args.slice(args[2] === "--" ? 3 : 2);
-    if (nested.length) validateInvocation(kind, nested);
-  }
+  const wrapped = wrappedCommand(args);
+  if (wrapped?.length) validateInvocation(kind, wrapped);
   if (/^(?:sh|bash|zsh|dash|ksh|fish|cmd|powershell|pwsh)$/.test(executable) &&
       args.slice(1).some((arg) => /^-[a-z]*c[a-z]*$|^-(?:command|encodedcommand)$|^\/[ck]$/i.test(arg))) {
     throw new ResolutionError("Repository command strings passed to a shell are unsupported.");
@@ -195,12 +200,48 @@ function validateInvocation(kind: VerificationKind, args: string[]): void {
   }
 }
 
+function invokedScript(args: string[]): string | undefined {
+  if (!args[0] || !packageManagers.includes(commandName(args[0]))) return;
+  const wrapped = wrappedCommand(args);
+  if (wrapped) return invokedScript(wrapped);
+  const subcommand = args[1];
+  if (subcommand === "run" || subcommand === "run-script") {
+    if (!args[2]) throw new ResolutionError("A live package command requires a named script.");
+    return args[2];
+  }
+  return subcommand;
+}
+
+function validateLiveScript(
+  kind: VerificationKind, script: string, scripts: Record<string, unknown>, seen = new Set<string>(),
+): void {
+  if (seen.has(script)) throw new ResolutionError("The live package script has a cyclic alias.");
+  seen.add(script);
+  const body = scripts[script];
+  if (!Object.hasOwn(scripts, script) || typeof body !== "string" || !body.trim()) {
+    throw new ResolutionError(`The package script ${script} is unavailable.`);
+  }
+  let command: string[];
+  try {
+    command = argv(body);
+  } catch (error) {
+    if (!(error instanceof ResolutionError)) throw error;
+    // A native script can compose a launch and a probe. Inspect single commands
+    // and alias chains without reimplementing the package manager's shell.
+    return;
+  }
+  validateInvocation(kind, command);
+  const alias = invokedScript(command);
+  if (alias !== undefined) validateLiveScript(kind, alias, scripts, seen);
+}
+
 export async function resolveInvocation(
   root: string, kind: VerificationKind, command: CommandSource, sources: CommandAuthority[],
 ): Promise<CommandInvocation> {
   const cwd = await directory(root, command.cwd ?? ".");
   const candidates: string[][] = [];
-  if (command.script) candidates.push(await fromScript(root, cwd, command.script, sources));
+  const configured = command.script ? await fromScript(root, cwd, command.script, sources) : undefined;
+  if (configured) candidates.push(configured.args);
   for (const docs of command.docs ?? []) {
     candidates.push(canonicalArgv(await fromDocumentation(root, docs, sources), command.script?.name));
   }
@@ -210,6 +251,18 @@ export async function resolveInvocation(
     throw new ResolutionError("Repository configuration and documentation specify conflicting commands.");
   }
   validateInvocation(kind, candidate);
+  if (kind !== "automated") {
+    const script = invokedScript(candidate);
+    if (script !== undefined) {
+      let scripts = configured?.scripts;
+      if (!scripts) {
+        const manifest = await authority(root, repositoryPath(root, resolve(cwd, "package.json")));
+        sources.push(manifest.source);
+        scripts = configuration(manifest.contents).scripts ?? {};
+      }
+      validateLiveScript(kind, script, scripts);
+    }
+  }
   const [executable, ...args] = candidate;
   if (!executable || executable.includes("\0") || args.some((argument) => argument.includes("\0"))) {
     throw new ResolutionError("The command must have a literal executable and valid argv.");

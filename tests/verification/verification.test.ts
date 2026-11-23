@@ -42,6 +42,10 @@ function verificationTask(criteria: string[] = ["unit"]): TaskBrief {
   return { ...task, criteria: task.criteria.filter((criterion) => criteria.includes(criterion.id)) };
 }
 
+async function fixtureScripts(scripts: Record<string, string>) {
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@11.25.0", scripts }));
+}
+
 async function fixtureDoc(commands: Record<string, string>) {
   await writeFile(join(root, "README.md"), Object.entries(commands).map(([heading, command]) =>
     [`## ${heading}`, "", "```sh", command, "```", ""].join("\n")).join("\n"));
@@ -50,10 +54,7 @@ async function fixtureDoc(commands: Record<string, string>) {
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "axiom-verification-")));
   store = new EvidenceStore(join(root, ".axiom", "runs"));
-  await writeFile(join(root, "package.json"), JSON.stringify({
-    packageManager: "pnpm@11.25.0",
-    scripts: { test: "node check.cjs", build: "node check.cjs", lint: "node check.cjs" },
-  }));
+  await fixtureScripts({ test: "node check.cjs", build: "node check.cjs", lint: "node check.cjs" });
   await writeFile(join(root, ".gitignore"), "node_modules/\n");
   await writeFile(join(root, "pnpm-lock.yaml"), [
     "lockfileVersion: '9.0'", "", "settings:", "  autoInstallPeers: true", "  excludeLinksFromLockfile: false",
@@ -241,4 +242,52 @@ test("cancels a running command and keeps its interruption as observed evidence"
   });
   const evidence = await store.read("acceptance", report.checks[0]!.evidenceId!);
   expect(evidence?.command?.exitCode).toBeUndefined();
+});
+
+test("blocks structural-only native scripts and their aliases when declared as live checks", async () => {
+  await fixtureScripts({
+    preview: "tsc --noEmit",
+    inspect: "pnpm run type-validation",
+    "type-validation": "tsc --noEmit",
+  });
+  await fixtureDoc({ "Live checks": "pnpm run inspect" });
+  const plan = await planVerification({
+    root, task: verificationTask(["application"]),
+    requirements: [
+      { ...runtime, id: "manifest-script", command: { script: { name: "preview" } } },
+      { ...runtime, id: "documented-script", kind: "visual" },
+    ],
+  });
+  expect(plan.checks).toMatchObject([
+    { outcome: { status: "blocked", reason: expect.stringMatching(/automated/i) } },
+    { outcome: { status: "blocked", reason: expect.stringMatching(/automated/i) } },
+  ]);
+});
+
+test("accepts a native live script that probes the running localhost application", async () => {
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests += 1;
+    response.writeHead(request.url === "/health" ? 200 : 404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No fixture address");
+    await writeFile(join(root, "probe.cjs"),
+      "fetch(process.argv[2]).then((response) => { if (!response.ok) process.exitCode = 7; });\n");
+    await fixtureScripts({ preview: `node probe.cjs http://127.0.0.1:${address.port}/health` });
+    await fixtureDoc({ "Live checks": "pnpm run preview" });
+    const plan = await planVerification({
+      root, task: verificationTask(["application"]),
+      requirements: [{ ...runtime, command: { script: { name: "preview" }, docs: runtime.command!.docs! } }],
+    });
+    const { report } = await executeVerification({ plan, store, capabilities: live });
+    expect(report).toMatchObject({
+      conforms: true, checks: [{ kind: "runtime", evidenceId: expect.any(String), outcome: { status: "passed" } }],
+    });
+    expect(requests).toBe(1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
