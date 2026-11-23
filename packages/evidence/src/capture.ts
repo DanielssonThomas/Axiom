@@ -4,7 +4,7 @@ import type { EvidenceStore, SelectedArtifact } from "./store.js";
 
 export type CommandCompletion =
   | { kind: "exited"; exitCode: number }
-  | { kind: "unavailable"; reason: "executable" | "cwd" | "startup" }
+  | { kind: "unavailable"; reason: "executable" | "cwd" | "startup" | "observation" }
   | { kind: "interrupted"; reason: "signal" | "cancelled" | "timed_out"; signal?: string };
 
 export type CommandInvocation = Pick<CommandEvidence, "executable" | "args" | "cwd">;
@@ -26,6 +26,7 @@ const unavailableReasons = {
   executable: "The command executable is unavailable.",
   cwd: "The command working directory is unavailable.",
   startup: "The command could not be started.",
+  observation: "The executor did not return a command completion.",
 };
 const interruptedReasons = {
   signal: "The command was interrupted by a termination signal.",
@@ -41,6 +42,16 @@ function outcomeOf(completion: CommandCompletion): EvidenceOutcome {
       ? { status: "passed" }
       : { status: "failed", reason: `The command exited with code ${completion.exitCode}.` };
   }
+}
+
+function unobservedCompletion(error: unknown): CommandCompletion {
+  if (error instanceof Error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (error.name === "AbortError" || code === "ABORT_ERR") return { kind: "interrupted", reason: "cancelled" };
+    if (error.name === "TimeoutError" || code === "ETIMEDOUT") return { kind: "interrupted", reason: "timed_out" };
+    if (code === "ENOENT" || code === "EACCES") return { kind: "unavailable", reason: "startup" };
+  }
+  return { kind: "unavailable", reason: "observation" };
 }
 
 function recordableCommand(command: CommandInvocation, values: readonly string[]): CommandEvidence {
@@ -67,7 +78,12 @@ export async function captureCommandEvidence(
   const command = recordableCommand(invocation, request.sensitiveValues ?? []);
   const startedAt = new Date().toISOString();
   const start = performance.now();
-  const completion = await execute(invocation);
+  let completion: CommandCompletion;
+  try {
+    completion = await execute(invocation);
+  } catch (error) {
+    completion = unobservedCompletion(error);
+  }
   const durationMs = performance.now() - start;
 
   if (completion.kind === "exited") command.exitCode = completion.exitCode;

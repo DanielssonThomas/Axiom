@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -248,4 +248,42 @@ test("requires every declared check and keeps optional evidence visible", async 
       { criterionId: "extra", required: false, results: [{ outcome: { status: "not_run" } }] },
     ],
   });
+});
+
+test("includes a scoped symlink's consumed target in source freshness", async () => {
+  await writeFile(join(root, "linked.config"), "enabled=true");
+  await symlink("linked.config", join(root, "config-link"), "file");
+  const source = { root, paths: ["config-link"] };
+  const before = await snapshotSource(source);
+  await writeFile(join(root, "linked.config"), "enabled=false");
+  expect((await snapshotSource(source)).digest).not.toBe(before.digest);
+});
+
+test("cannot establish evidence when a selected source link escapes the checkout", async () => {
+  const otherRoot = await mkdtemp(join(tmpdir(), "axiom-external-"));
+  try {
+    await writeFile(join(otherRoot, "external.config"), "external=true");
+    await symlink(join(otherRoot, "external.config"), join(root, "config-link"), "file");
+    await expect(snapshotSource({ root, paths: ["config-link"] })).rejects.toThrow(/outside the checkout/i);
+  } finally {
+    await rm(otherRoot, { recursive: true, force: true });
+  }
+});
+
+test("records a thrown executor error as blocked without storing error details", async () => {
+  const request = {
+    id: "thrown", task, criterionIds: ["unit"], host, source: { root },
+    command: { executable: process.execPath, args: ["check.cjs"], cwd: root }, store,
+  };
+  const error = new Error("internal secret diagnostics");
+  const failed = await captureCommandEvidence(request, async () => { throw error; });
+  expect(failed.outcome).toEqual({ status: "blocked", reason: expect.stringMatching(/completion/i) });
+  expect(failed.command?.exitCode).toBeUndefined();
+  expect(JSON.stringify(failed)).not.toContain(error.message);
+
+  const cancelled = await captureCommandEvidence({ ...request, id: "abort-thrown" }, async () => {
+    throw new DOMException("secret abort details", "AbortError");
+  });
+  expect(cancelled.outcome).toEqual({ status: "blocked", reason: expect.stringMatching(/cancellation/i) });
+  expect(JSON.stringify(cancelled)).not.toContain("secret abort details");
 });
