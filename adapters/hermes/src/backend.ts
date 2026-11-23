@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { backendRequestSchema, backendResultSchema } from "@axiom/contracts";
 import type { BackendRequest, BackendResult, BenchmarkBackend, EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
@@ -31,6 +31,26 @@ interface Trace {
 }
 
 const unknownUsage = { metering: "unknown", reason: "Hermes did not expose measured token usage." } as const;
+
+function contains(root: string, path: string): boolean {
+  const offset = relative(root, path);
+  return !isAbsolute(offset) && offset !== ".." && !offset.startsWith(`..${sep}`);
+}
+
+function overlaps(left: string, right: string): boolean {
+  return contains(left, right) || contains(right, left);
+}
+
+// Resolve any existing symlink parents before creating the caller's archive directories.
+async function prospectivePath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    const parent = dirname(path);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === path) throw error;
+    return join(await prospectivePath(parent), basename(path));
+  }
+}
 
 function safeLabel(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9_.:/-]{1,160}$/.test(value);
@@ -92,6 +112,19 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       const cwd = await realpath(request.workspace);
       const selected = profileDirectory(profile);
       const home = dirname(dirname(selected));
+      if (overlaps(cwd, home)) return blocked("The Hermes profile home overlaps the disposable workspace.");
+      const requestedArchive = resolve(archiveDirectory);
+      const storage = await prospectivePath(requestedArchive);
+      if (overlaps(cwd, requestedArchive) || overlaps(cwd, storage)) {
+        return blocked("The Hermes evidence archive overlaps the disposable workspace.");
+      }
+      const traceDirectory = join(storage, "hermes");
+      const checksDirectory = join(storage, "acceptance");
+      for (const directory of [traceDirectory, checksDirectory]) {
+        if (await prospectivePath(directory) !== directory) return blocked("The Hermes evidence archive has a redirected subdirectory.");
+        await mkdir(directory, { recursive: true, mode: 0o700 });
+        if (await realpath(directory) !== directory) return blocked("The Hermes evidence archive has a redirected subdirectory.");
+      }
       const activation = inspectHermesActivation(profile);
       const useAxiom = request.mode === "with_axiom";
       const { bundleDigest } = activation;
@@ -109,7 +142,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
         HOME: home, HERMES_HOME: home,
         HERMES_TUI_GATEWAY_URL: "",
         AXIOM_HERMES_NODE: process.execPath,
-        AXIOM_HERMES_ARCHIVE: resolve(archiveDirectory),
+        AXIOM_HERMES_ARCHIVE: storage,
       };
       const base = { executable, cwd, env, deadline, signal };
       const scope = [...this.options.arguments ?? [], "--profile", profile.profile];
@@ -156,11 +189,10 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
         return blocked("The Hermes stream lacked a matching native model and terminal result.");
       }
 
-      const directory = join(archiveDirectory, "hermes");
-      await mkdir(directory, { recursive: true, mode: 0o700 });
+      if (await realpath(traceDirectory) !== traceDirectory) return blocked("The Hermes trace archive changed during execution.");
       const name = `${request.id}-${randomUUID()}.json`;
-      await writeFile(join(directory, name), JSON.stringify(trace) + "\n", { flag: "wx", mode: 0o600 });
-      const artifact = await new EvidenceStore(archiveDirectory).artifact({ kind: "hermes-trace", path: "hermes/" + name });
+      await writeFile(join(traceDirectory, name), JSON.stringify(trace) + "\n", { flag: "wx", mode: 0o600 });
+      const artifact = await new EvidenceStore(storage).artifact({ kind: "hermes-trace", path: "hermes/" + name });
       if (!artifact) return blocked("The normalized Hermes trace could not be archived.");
       const evidence = { host: request.host, artifacts: [artifact], usage: trace.usage };
       if (signal.aborted) return result({ status: "blocked", reason: "Hermes execution was cancelled." }, evidence);

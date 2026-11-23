@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -13,13 +13,17 @@ afterEach(() => {
 function fixture() {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "axiom-hermes-backend-")));
   workspaces.push(directory);
+  const home = join(directory, "hermes-home");
+  const workspace = join(directory, "workspace");
   const entrypoint = join(directory, "hermes-fixture.cjs");
-  mkdirSync(join(directory, "profiles/eval"), { recursive: true });
-  writeFileSync(join(directory, "profiles/eval/config.yaml"), "{}\n");
+  mkdirSync(join(home, "profiles/eval"), { recursive: true });
+  mkdirSync(workspace);
+  writeFileSync(join(home, "profiles/eval/config.yaml"), "{}\n");
   writeFileSync(entrypoint, `
 const fs = require("node:fs");
 const { argv } = process;
 if (argv.includes("--version")) {
+  fs.writeFileSync(process.env.HERMES_HOME + "/version-probed", "yes");
   console.log("Hermes Agent v0.23.3");
   return;
 }
@@ -41,7 +45,7 @@ if (prompt === "Wait for cancellation") {
 if (prompt !== 'A literal $(not shell) task.' || !argv.includes("--format") || !argv.includes("stream-json")
   || !argv.includes("--max-turns") || !argv.includes("2") || argv.includes("--run-budget")
   || !argv.includes("--query-file") || !argv.includes("--profile") || !argv.includes("eval")
-  || process.env.HERMES_HOME !== ${JSON.stringify(directory)}) process.exit(8);
+  || process.env.HERMES_HOME !== ${JSON.stringify(home)}) process.exit(8);
 for (const event of [
   {type:"system",subtype:"init",model:"fixture-model"},
   {type:"tool_use",name:"read_file",tool_call_id:"call-1",input:{secret:"not archived"}},
@@ -50,15 +54,18 @@ for (const event of [
 ]) console.log(JSON.stringify(event));
 `);
   const archive = join(directory, "archive");
+  const options = {
+    executable: process.execPath, arguments: [entrypoint], profile: { home, profile: "eval" },
+    archiveDirectory: archive, provider: "custom", maxTurns: 2,
+  };
   return {
     directory,
+    home,
     archive,
-    backend: new HermesBenchmarkBackend({
-      executable: process.execPath, arguments: [entrypoint], profile: { home: directory, profile: "eval" },
-      archiveDirectory: archive, provider: "custom", maxTurns: 2,
-    }),
+    options,
+    backend: new HermesBenchmarkBackend(options),
     request: {
-      id: "attempt-1", caseId: "case-1", prompt: "A literal $(not shell) task.", workspace: directory,
+      id: "attempt-1", caseId: "case-1", prompt: "A literal $(not shell) task.", workspace,
       host: { agent: "hermes", version: "0.23.3", model: "fixture-model", os: process.platform, surface: "cli" },
       policy: { version: "1", digest: "sha256:" + "a".repeat(64), profiles: [] },
       mode: "without_axiom" as const, timeoutMs: 3500,
@@ -81,14 +88,34 @@ test("runs documented Hermes flags with literal stdin and archives normalized na
   expect(raw).not.toContain("A literal");
 });
 
+test("blocks archive and profile overlaps before launching Hermes", async () => {
+  const { archive, directory, home, options, request } = fixture();
+  const redirected = join(directory, "redirected");
+  symlinkSync(request.workspace, redirected, "junction");
+  for (const archiveDirectory of [join(request.workspace, "archive"), redirected, join(redirected, "subdirectory")]) {
+    const backend = new HermesBenchmarkBackend({ ...options, archiveDirectory });
+    expect((await backend.run(request, new AbortController().signal)).outcome)
+      .toMatchObject({ status: "blocked", reason: expect.stringContaining("archive") });
+  }
+  const backend = new HermesBenchmarkBackend(options);
+  expect((await backend.run({ ...request, workspace: home }, new AbortController().signal)).outcome)
+    .toMatchObject({ status: "blocked", reason: expect.stringContaining("profile") });
+  mkdirSync(archive);
+  symlinkSync(request.workspace, join(archive, "acceptance"), "junction");
+  expect((await backend.run(request, new AbortController().signal)).outcome)
+    .toMatchObject({ status: "blocked", reason: expect.stringContaining("redirected") });
+  expect(existsSync(join(request.workspace, "subdirectory"))).toBe(false);
+  expect(existsSync(join(home, "version-probed"))).toBe(false);
+});
+
 test("cancels a running host and reports unavailable activation and bounded timeout", async () => {
-  const { backend, request, directory } = fixture();
+  const { backend, request, home } = fixture();
   const abort = new AbortController();
   const running = backend.run({ ...request, prompt: "Wait for cancellation" }, abort.signal);
-  await vi.waitFor(() => expect(existsSync(join(directory, "client-started"))).toBe(true), { timeout: 3_000 });
+  await vi.waitFor(() => expect(existsSync(join(home, "client-started"))).toBe(true), { timeout: 3_000 });
   abort.abort();
   expect((await running).outcome).toMatchObject({ status: "blocked", reason: expect.stringContaining("cancel") });
-  const owner = JSON.parse(readFileSync(join(directory, "gateway_state.json"), "utf8"));
+  const owner = JSON.parse(readFileSync(join(home, "gateway_state.json"), "utf8"));
   expect(() => process.kill(owner.pid, 0)).toThrow();
   expect((await backend.run({ ...request, mode: "with_axiom" }, new AbortController().signal)).outcome)
     .toMatchObject({ status: "blocked", reason: expect.stringContaining("activation") });
