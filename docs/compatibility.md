@@ -55,3 +55,16 @@ AXIOM_HERMES_CLI=/absolute/path/to/hermes pnpm test -- tests/adapters/hermes
 ```
 
 The Hermes CLI was built from upstream commit `caafe5389ae585ef77387a962aee05b1bcf17029` with its frozen uv lock and Python 3.14.10. See [installation](install.md) for profile selection and lifecycle commands.
+
+## Run the installed-host matrix
+
+The integration suite assembles versioned native artifacts from the checkout. It checks ordinary sessions, update, disable, removal, configuration preservation, and a broken-install control for each available host. It reports the source, bundle and policy identities alongside the observed mechanism.
+
+```sh
+AXIOM_TEST_CLAUDE_BINARY=/absolute/path/to/claude \
+AXIOM_TEST_CODEX_BINARY=/absolute/path/to/codex \
+AXIOM_HERMES_CLI=/absolute/path/to/hermes \
+pnpm test -- tests/integration/hosts
+```
+
+An unconfigured host reports blocked installation. The suite uses synthetic localhost providers and leaves external model behavior unrun. The paired Claude fixture also runs the independent reuse grader against an unchanged result. Both fixture attempts must fail that requirement even when the native CLI completes.
