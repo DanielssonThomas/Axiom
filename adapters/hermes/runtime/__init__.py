@@ -209,21 +209,24 @@ def _observe_worker_delivery(ctx, folder, identity, instance, frames):
 
     def observe(request, next_call, session_id="", **_kwargs):
         lineage = pending.pop(session_id, None) if isinstance(session_id, str) else None
-        if lineage:
-            parent, worker = lineage
-            content = _request_content(request)
-            messages, system = content or ([], [])
-            try:
-                _report(folder, f"delegated-{worker}.json", {
-                    "digest": identity, "instance": instance, "mechanism": "first_llm_execution",
-                    "parentSession": parent, "childSession": session_id, "workerId": worker,
-                    "inspectable": content is not None, "coreLoaded": _contains_policy(system, frames),
-                    "briefDigest": _worker_brief_digest(messages),
-                }, replace=False)
-            except FileExistsError:
-                # Only the first native request can supply this receipt.
-                pass
-        return next_call()
+        if not lineage:
+            return next_call()
+        parent, worker = lineage
+        content = _request_content(request)
+        messages, system = content or ([], [])
+        observation = {
+            "digest": identity, "instance": instance, "mechanism": "first_llm_execution",
+            "parentSession": parent, "childSession": session_id, "workerId": worker,
+            "inspectable": content is not None, "coreLoaded": _contains_policy(system, frames),
+            "briefDigest": _worker_brief_digest(messages),
+        }
+        # A failed first call cannot establish delivery or let a later retry attest it.
+        response = next_call()
+        try:
+            _report(folder, f"delegated-{worker}.json", observation, replace=False)
+        except FileExistsError:
+            pass
+        return response
 
     ctx.register_hook("subagent_start", started)
     ctx.register_hook("subagent_stop", stopped)

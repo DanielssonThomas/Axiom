@@ -56,12 +56,16 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
       }, home, target.profile);
       if ("interrupted" in gateway) throw new Error("The disposable native Hermes gateway did not start.");
       try {
-        for (const includeBrief of [true, false]) {
+        for (const trial of ["present", "missing", "provider-rejected"] as const) {
           loopback.requests.length = 0;
-          loopback.respondWithHermesTool(async () => ({
-            name: "delegate_task",
-            arguments: JSON.stringify({ tasks: [{ goal: brief.objective, ...(includeBrief && { context: formatted }) }] }),
-          }));
+          const includeBrief = trial !== "missing";
+          loopback.respondWithHermesTool(async () => {
+            if (trial === "provider-rejected") loopback.respondWithHermesTool(async () => {
+              throw new Error("The disposable worker provider rejected the first request.");
+            });
+            return { name: "delegate_task",
+              arguments: JSON.stringify({ tasks: [{ goal: brief.objective, ...(includeBrief && { context: formatted }) }] }) };
+          });
           const parentPrompt = "Launch a single read-only fixture worker.";
           const result = await runHermes({
             ...command, signal: AbortSignal.any([command.signal, gateway.signal]), input: parentPrompt,
@@ -72,14 +76,20 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
           const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
           const terminal = events.find((event) => event.type === "result");
           const delegation = events.find((event) => event.type === "tool_result" && event.name === "delegate_task");
-          expect(delegation?.is_error).toBe(false);
+          expect(delegation?.is_error).toBe(trial === "provider-rejected");
           const workers = JSON.parse(delegation.output).results;
+          const { subagent_id: workerId } = workers[0];
+          const delivery = inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief);
+          if (trial === "provider-rejected") {
+            expect(loopback.requests.some(({ text }) => text.includes(formatted))).toBe(true);
+            expect(workers[0].status).not.toBe("completed");
+            expect(delivery.outcome.status).toBe("blocked");
+            continue;
+          }
           expect(workers).toEqual([expect.objectContaining({
             status: "completed", subagent_id: expect.any(String), tokens: { input: 9, output: 3 },
           })]);
           expect(terminal?.tokens).toMatchObject({ input: 18, output: 6 });
-          const { subagent_id: workerId } = workers[0];
-          const delivery = inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief);
           expect(delivery).toMatchObject({
             childSession: expect.any(String),
             outcome: { status: includeBrief ? "passed" : "failed" },
