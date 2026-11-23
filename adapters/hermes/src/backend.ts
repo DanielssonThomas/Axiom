@@ -112,7 +112,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       const cwd = await realpath(request.workspace);
       const selected = profileDirectory(profile);
       const home = dirname(dirname(selected));
-      if (overlaps(cwd, home)) return blocked("The Hermes profile home overlaps the disposable workspace.");
+      if (overlaps(cwd, await realpath(home))) return blocked("The Hermes profile home overlaps the disposable workspace.");
       const requestedArchive = resolve(archiveDirectory);
       const storage = await prospectivePath(requestedArchive);
       if (overlaps(cwd, requestedArchive) || overlaps(cwd, storage)) {

@@ -98,8 +98,12 @@ test("blocks archive and profile overlaps before launching Hermes", async () => 
       .toMatchObject({ status: "blocked", reason: expect.stringContaining("archive") });
   }
   const backend = new HermesBenchmarkBackend(options);
-  expect((await backend.run({ ...request, workspace: home }, new AbortController().signal)).outcome)
-    .toMatchObject({ status: "blocked", reason: expect.stringContaining("profile") });
+  const redirectedHome = join(directory, "redirected-home");
+  symlinkSync(home, redirectedHome, "junction");
+  for (const workspace of [home, redirectedHome]) {
+    expect((await backend.run({ ...request, workspace }, new AbortController().signal)).outcome)
+      .toMatchObject({ status: "blocked", reason: expect.stringContaining("profile") });
+  }
   mkdirSync(archive);
   symlinkSync(request.workspace, join(archive, "acceptance"), "junction");
   expect((await backend.run(request, new AbortController().signal)).outcome)
