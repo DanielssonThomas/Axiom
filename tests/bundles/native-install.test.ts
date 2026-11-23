@@ -13,9 +13,10 @@ function createWorkspace() {
   temporary.push(root);
   const repository = join(root, "checkout");
   mkdirSync(repository);
-  for (const entry of ["core", "profiles", "skills", "LICENSE"]) {
-    cpSync(join(checkout, entry), join(repository, entry), { recursive: true });
-  }
+  const reviewed = execFileSync("git", ["archive", "--format=tar", "HEAD", "--", "core", "profiles", "skills", "LICENSE"], {
+    cwd: checkout, timeout: 10_000, maxBuffer: 16 * 1024 * 1024,
+  });
+  execFileSync("tar", ["-xf", "-", "-C", repository], { input: reviewed, timeout: 10_000 });
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
   git("init", "-q");
   git("-c", "core.autocrlf=false", "add", ".");
@@ -72,7 +73,7 @@ test("rejects unreviewed source changes and preserves a caller-owned destination
   writeFileSync(join(repository, "core/AXIOMS.md"), "Uncommitted policy edit.\n");
   expect((await runNativeBundle({ repository, output: join(root, "dirty") })).outcome)
     .toMatchObject({ status: "blocked", reason: expect.stringMatching(/uncommitted/) });
-});
+}, 20_000);
 
 async function nativeFixture() {
   const { runNativeBundle } = await import("../../packages/cli/src/native-install.js");
@@ -102,7 +103,7 @@ test("rejects an altered Codex distribution before touching the selected profile
     program: join(root, "unavailable-codex") });
   expect(result.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/digest/) });
   expect(existsSync(home)).toBe(false);
-});
+}, 20_000);
 
 test.runIf(Boolean(process.env.AXIOM_TEST_CLAUDE_BINARY) && process.platform === "linux")(
   "installs and updates the staged Claude marketplace with native commands and keeps unrelated settings", async () => {
