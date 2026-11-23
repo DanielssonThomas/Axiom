@@ -6,7 +6,7 @@ Axiom is a shared foundation for agents to discover context, reuse existing capa
 
 ## Status
 
-This repository currently contains the v1 design, contributor rules, and implementation backlog. The CLI, plugins, skills, and automated gates are **planned, not yet implemented or verified**. No package is ready to install.
+The workspace provides shared contracts, deterministic checks, and a CLI skeleton. Native plugins, portable skills, and release validation are planned.
 
 Implementation is organized under the [Axiom v1 Epic](https://github.com/DanielssonThomas/Axiom/issues/1) and the [Axiom v1 milestone](https://github.com/DanielssonThomas/Axiom/milestone/1). Start with [the foundation issue](https://github.com/DanielssonThomas/Axiom/issues/2); its contracts enable the parallel workstreams.
 
@@ -20,13 +20,26 @@ Implementation is organized under the [Axiom v1 Epic](https://github.com/Daniels
 | Native adapters | Claude Code, Codex, and Hermes installation, activation, capability reporting, and lifecycle handling. |
 | Validation and evidence | Structural checks, repository-native tests, behavioral evaluations, and honest runtime verification. |
 
-The planned CLI exposes `axiom doctor`, `axiom check`, and `axiom benchmark <agent>`, with `axiom --benchmark <agent>` as an alias. These names describe the v1 contract; they are not installation instructions.
+The [CLI contract](docs/architecture.md#cli) defines the commands, JSON output, and exit codes.
 
 Axiom uses existing standards and native tools where suitable. Reuse does not require a framework around every small task: identify the responsibility, inspect what exists, and choose the smallest durable implementation. Named domain and API contracts have one authoritative definition, even with one initial consumer.
 
 ## Build Axiom
 
 Read [AGENTS.md](AGENTS.md), [the core fundamentals](core/AXIOMS.md), and [the architecture](docs/architecture.md) before claiming an issue.
+
+Use Node.js 24 and the pnpm version pinned in `package.json`.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm test -- tests/contracts
+pnpm test -- tests/cli
+pnpm test
+pnpm typecheck
+pnpm build
+```
+
+`pnpm test -- <path>` builds the workspace and runs only the matching test files. After building, run the CLI with `node packages/cli/dist/index.js doctor`.
 
 Each implementation issue defines owned paths, prerequisites, measurable acceptance criteria, and validation. Use a separate branch or worktree. Coordinate shared contracts, manifests, and lockfiles through the integration owner. Parallel work starts when the required contracts are merged.
 

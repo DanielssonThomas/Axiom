@@ -1,0 +1,19 @@
+{
+  "name": "axiom",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm --silent build && node vitest.run.mjs"
+  },
+  "devDependencies": {
+    "@axiom/contracts": "workspace:*",
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.12"
+  }
+}
