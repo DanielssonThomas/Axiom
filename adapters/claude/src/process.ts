@@ -17,6 +17,8 @@ export type ClaudeLauncher = (
   environment: NodeJS.ProcessEnv,
 ) => { program: string; args: readonly string[]; env: NodeJS.ProcessEnv };
 
+export const subscriptionArguments = ["--restricted", "--settings", '{"forceLoginMethod":"claudeai"}'] as const;
+
 export function invokeClaude(
   profile: ClaudeProfile, args: readonly string[], signal = AbortSignal.timeout(30_000), input?: string,
 ): Promise<{ code: number; stdout: string }> {
@@ -68,9 +70,22 @@ export function invokeClaude(
       else resolve({ code, stdout: Buffer.concat(stdout).toString("utf8") });
     });
     signal.addEventListener("abort", terminate, { once: true });
+    if (signal.aborted) terminate();
     child.stdin?.on("error", () => { /* A native administrative command may exit without reading stdin. */ });
     child.stdin?.end(input);
   });
+}
+
+export async function hasClaudeSubscription(profile: ClaudeProfile, signal: AbortSignal): Promise<boolean> {
+  const { code, stdout } = await invokeClaude(profile, [...subscriptionArguments, "auth", "status", "--json"], signal);
+  if (code !== 0) return false;
+  try {
+    const status = JSON.parse(stdout);
+    return status?.loggedIn === true && status.authMethod === "claude.ai"
+      && status.apiProvider === "firstParty" && status.configDirectory === profile.home;
+  } catch {
+    return false;
+  }
 }
 
 export async function claudeVersion(profile: ClaudeProfile, signal?: AbortSignal): Promise<string | undefined> {

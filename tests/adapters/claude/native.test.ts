@@ -9,6 +9,7 @@ import {
   observeClaudeInstallation, supportedVersion, validateClaudeBundle, workerBriefEnvironment,
 } from "../../../adapters/claude/src/index.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
+import { openLoopback } from "../../integration/hosts/loopback.js";
 
 const executable = process.env.AXIOM_TEST_CLAUDE_BINARY;
 const host = { agent: "claude", version: supportedVersion, model: "claude-sonnet-4-6", os: "linux", surface: "cli" };
@@ -182,3 +183,77 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     await rm(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+test.runIf(Boolean(executable) && process.platform === "linux")("loads a native subscription for a restricted pair without reusing installed instructions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-claude-subscription-"));
+  const workspace = join(root, "workspace");
+  const home = join(root, "profile");
+  const userHome = join(root, "user");
+  const artifacts = join(root, "archive");
+  const loopback = await openLoopback("claude", host.model);
+  try {
+    await Promise.all([mkdir(workspace), mkdir(home), mkdir(userHome)]);
+    const environment = {
+      ANTHROPIC_BASE_URL: loopback.endpoint,
+      NO_PROXY: "127.0.0.1,localhost", HTTP_PROXY: "http://127.0.0.1:1",
+      HTTPS_PROXY: "http://127.0.0.1:1", ALL_PROXY: "http://127.0.0.1:1",
+    };
+    const bundle = await buildClaudeBundle({
+      repository: process.cwd(), destination: join(root, "bundle"), sourceRevision: "native-subscription-fixture",
+      policyVersion: "1", selectedProfiles: [], version: "0.1.0",
+      checks: Object.fromEntries([
+        "ui-atomic.composition", "ui-atomic.reuse", "ui-atomic.verification", "angular-nx.structure", "angular-nx.native-tooling",
+      ].map((id) => [id, { kind: "mechanical" }])),
+      skills: ["context", "delegate", "design", "diagnose", "knowledge", "verify"].map((id) => ({ id })),
+    });
+    const backend = createClaudeBackend({ program: executable!, authHome: home, userHome, environment, artifacts, bundle });
+    const run = (mode: "with_axiom" | "without_axiom" = "with_axiom", id: string = mode) => backend.run({
+      id, caseId: "fixture", prompt: "Acknowledge the restricted fixture.", workspace, host,
+      policy: bundle.manifest.policy, mode, timeoutMs: 8_000,
+    }, new AbortController().signal);
+    expect((await run("with_axiom", "missing-login")).outcome).toMatchObject({
+      status: "blocked", reason: expect.stringMatching(/subscription/i),
+    });
+    expect(loopback.requests).toHaveLength(0);
+
+    const credential = JSON.stringify({ claudeAiOauth: {
+      accessToken: "fixture-dummy-access", refreshToken: "fixture-dummy-refresh", expiresAt: Date.now() + 86_400_000,
+      scopes: ["user:inference", "user:profile"], subscriptionType: "pro", rateLimitTier: "default_claude_pro",
+    } });
+    const config = join(home, "settings.json");
+    const credentialPath = join(home, ".credentials.json");
+    await writeFile(credentialPath, credential, { mode: 0o600 });
+    const apiKey = createClaudeBackend({
+      program: executable!, authHome: home, userHome, environment: { ...environment, ANTHROPIC_API_KEY: "fixture-unbilled" },
+      artifacts, bundle,
+    });
+    expect((await apiKey.run({
+      id: "unexpected-api-key", caseId: "fixture", prompt: "This fixture should not run.", workspace, host,
+      policy: bundle.manifest.policy, mode: "with_axiom", timeoutMs: 8_000,
+    }, new AbortController().signal)).outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/subscription/i) });
+    expect(loopback.requests).toHaveLength(0);
+    await writeFile(join(home, "CLAUDE.md"), "Existing home instruction canary.\n");
+    await writeFile(join(workspace, "CLAUDE.md"), "Existing project instruction canary.\n");
+    await configureClaudeProfile({ program: executable!, home, userHome, workspace }, "user", "install", bundle);
+    const before = await readFile(config, "utf8");
+
+    for (const mode of ["with_axiom", "without_axiom"] as const) {
+      const expected = mode === "with_axiom";
+      const attempt = await run(mode);
+      expect(attempt).toMatchObject({ outcome: { status: "passed" }, artifacts: [{ kind: "action-trace" }] });
+      const evidence = await readFile(join(artifacts, attempt.artifacts[0]!.location), "utf8");
+      expect(evidence).not.toContain("fixture-dummy");
+      const observed = loopback.requests.at(-1)?.text ?? "";
+      expect(observed.includes(bundle.manifest.policy.digest)).toBe(expected);
+      expect(observed.includes("axiom:context")).toBe(expected);
+      expect(observed).not.toContain("Existing home instruction canary");
+      expect(observed).not.toContain("Existing project instruction canary");
+    }
+    expect(loopback.requests).toHaveLength(2);
+    expect(await readFile(config, "utf8")).toBe(before);
+    expect(await readFile(credentialPath, "utf8")).toBe(credential);
+  } finally {
+    await loopback.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 35_000);
