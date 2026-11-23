@@ -1,0 +1,2 @@
+Make the summary command render rows using the existing user-facing format.
+It should return the rendered string and preserve the single public run entry point in command.mjs.

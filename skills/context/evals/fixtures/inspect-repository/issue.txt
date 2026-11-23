@@ -1,0 +1,2 @@
+Sort labels in ascending code-unit order before rendering a summary.
+Keep the newline-delimited output and preserve the input array.
