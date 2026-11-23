@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { backendRequestSchema, backendResultSchema, usageSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
 import { supportedCodexHost } from "./activation.js";
 import { digest, type CodexBundle } from "./bundle.js";
@@ -82,6 +84,29 @@ function inside(root: string, path: string): boolean {
 
 const standardPermissions = "axiom-benchmark";
 
+/** The npm launcher starts a platform binary that the native sandbox needs to be able to re-execute. */
+export async function resolveCodexAccountProgram(program: string): Promise<string> {
+  const executable = await realpath(program);
+  const bin = dirname(executable);
+  if (basename(executable) !== "codex.js" || basename(bin) !== "bin") return executable;
+  const packageRoot = dirname(bin);
+  const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  if (manifest?.name !== "@openai/codex") return executable;
+  const machine = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : undefined;
+  if (process.platform !== "linux" || !machine) throw new Error("The standard Codex npm platform executable is unsupported.");
+  const vendorRoots = [join(packageRoot, "vendor")];
+  const fromLauncher = createRequire(executable);
+  try {
+    const installed = fromLauncher.resolve(`@openai/codex-linux-${process.arch}/package.json`);
+    vendorRoots.unshift(join(dirname(installed), "vendor"));
+  } catch { /* Some distributions ship the executable in the wrapper package. */ }
+  for (const vendor of vendorRoots) {
+    const binary = join(vendor, `${machine}-unknown-linux-musl`, "bin", "codex");
+    if (await access(binary, constants.X_OK).then(() => true, () => false)) return realpath(binary);
+  }
+  throw new Error("The installed Codex npm package lacks its platform executable.");
+}
+
 async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal) {
   const source = await realpath(authHome);
   const credential = join(source, "auth.json");
@@ -151,7 +176,7 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       }
       scope = await mkdtemp(join(tmpdir(), "axiom-codex-profile-"));
       const profile: CodexProfile = {
-        program: authHome ? await realpath(options.program) : options.program,
+        program: authHome ? await resolveCodexAccountProgram(options.program) : options.program,
         home: join(scope, "codex"),
         userHome: join(scope, "home"),
         workspace,

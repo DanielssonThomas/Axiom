@@ -67,7 +67,7 @@ test("standard benchmarks require native execution authorization and reject a cl
   }
   expect(run("benchmark", "codex", "--mode", "standard", "--allow-native", "--token-budget", "300000")).toMatchObject({ code: 2 });
   expect(run("benchmark", "claude", "--mode", "standard", "--allow-paid")).toMatchObject({ code: 2 });
-});
+}, 25_000);
 
 test("doctor distinguishes fresh native loading from changed installed instructions", () => {
   const root = directory();

@@ -8,6 +8,7 @@ import {
   parseCodexTrace, transformProfileInstructions,
 } from "../../../adapters/codex/src/index.js";
 import { runCodex } from "../../../adapters/codex/src/process.js";
+import { resolveCodexAccountProgram } from "../../../adapters/codex/src/backend.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
 
 let root: string;
@@ -31,6 +32,26 @@ function bundle() {
     source: join(root, "source"), destination: join(root, "market"), version: "1.0.0", catalog, profiles: [],
   });
 }
+
+test.runIf(process.platform === "linux" && ["x64", "arm64"].includes(process.arch))(
+  "resolves the official npm launcher to the executable inside its installed platform package", async () => {
+    const packages = join(root, "node_modules", "@openai");
+    const shim = join(packages, "codex", "bin", "codex.js");
+    const architecture = process.arch === "x64" ? "x86_64" : "aarch64";
+    const platformPackage = join(packages, `codex-linux-${process.arch}`);
+    const native = join(platformPackage, "vendor", `${architecture}-unknown-linux-musl`, "bin", "codex");
+    await mkdir(join(packages, "codex", "bin"), { recursive: true });
+    await mkdir(join(native, ".."), { recursive: true });
+    await writeFile(join(packages, "codex", "package.json"), '{"name":"@openai/codex"}');
+    await writeFile(join(platformPackage, "package.json"), "{}");
+    await writeFile(shim, "#!/usr/bin/env node\n", { mode: 0o700 });
+    await writeFile(native, "#!/bin/sh\n", { mode: 0o700 });
+    await expect(resolveCodexAccountProgram(shim)).resolves.toBe(native);
+    await expect(resolveCodexAccountProgram(native)).resolves.toBe(native);
+    await rm(native);
+    await expect(resolveCodexAccountProgram(shim)).rejects.toThrow(/platform executable/);
+  },
+);
 
 test("packages canonical skills and resolves policy through the shared contract", async () => {
   const built = await bundle();
