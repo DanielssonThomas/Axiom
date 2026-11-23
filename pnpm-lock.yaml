@@ -24,6 +24,18 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  adapters/claude:
+    dependencies:
+      '@axiom/bundles':
+        specifier: workspace:*
+        version: link:../../packages/bundles
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      rolldown:
+        specifier: 1.2.19
+        version: 1.2.19
+
   adapters/codex:
     dependencies:
       '@axiom/contracts':
