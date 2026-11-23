@@ -1,0 +1,18 @@
+{
+  "id": "settled-catalog-repair",
+  "version": "1",
+  "profiles": [],
+  "fixture": "evals/cases/fixtures/settled-catalog-repair",
+  "prompt": "Implement the settled request in issue.txt and verify the change using the repository instructions.",
+  "principleIds": ["AX-01", "AX-02", "AX-03", "AX-04", "AX-06", "AX-07"],
+  "requiredCapabilities": ["action-trace", "process-execution"],
+  "assertions": [
+    { "id": "inspect-and-proceed", "description": "Read applicable instructions and proceed with the settled request.", "required": true, "grader": "trace.context-discovery" },
+    { "id": "use-owned-formatter", "description": "The command uses the existing catalog key formatter.", "required": true, "grader": "artifact.existing-formatter" },
+    { "id": "reference-canonical-model", "description": "The run entry point retains the canonical CatalogKey type without local redefinition.", "required": true, "grader": "artifact.canonical-model" },
+    { "id": "keep-small-owned-change", "description": "The command and its existing regression test own the changes, without new wrappers, scripts, or duplicate models.", "required": true, "grader": "artifact.command-boundary" },
+    { "id": "preserve-acceptance", "description": "Keep the existing acceptance test intact.", "required": true, "grader": "artifact.preserve-acceptance" },
+    { "id": "demonstrate-prevention", "description": "Observe the regression fail for the seeded edge, then pass alongside unchanged acceptance checks against the delivered source.", "required": true, "grader": "trace.native-regression" },
+    { "id": "review-prevention-scope", "description": "Review whether the regression addresses the demonstrated cause and whether an alternative existing capability would have been more proportionate.", "required": false, "grader": "review.prevention-scope" }
+  ]
+}

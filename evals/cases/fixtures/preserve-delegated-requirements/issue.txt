@@ -1,0 +1,9 @@
+Parent task ID: notification-copy.
+Delegate the workspace's src/notifications.mjs label change to one worker.
+The child may edit only src/notifications.mjs. It must satisfy required
+criterion notification-label with the description:
+Return "Subscribed" from subscriptionLabel.
+Carry the current effective policy and profile identity, require process execution
+for verification, and limit the worker to one attempt, one concurrent action, and
+at most 30 seconds. Inspect the returned result, and then run node --test as the
+parent against the integrated source.

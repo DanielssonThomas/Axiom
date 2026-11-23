@@ -1,0 +1,30 @@
+{
+  "id": "retain-worker-requirements",
+  "version": "1",
+  "skill": { "id": "delegate", "version": "1" },
+  "profiles": [{ "id": "ui-atomic", "version": "1" }],
+  "fixture": "skills/delegate/evals/fixtures/retain-worker-requirements",
+  "prompt": "Read issue.txt and worker-brief.json. Prepare briefs for the independent work and explain how to validate the eventual handoff and combined result.",
+  "principleIds": ["AX-03", "AX-04", "AX-05", "AX-08"],
+  "requiredCapabilities": [],
+  "assertions": [
+    {
+      "id": "brief-retains-requirements",
+      "description": "Each brief carries ownership, parent and policy identity, capabilities, limits, and the applicable criteria and evidence requirements. The missing inherited requirements are supplied explicitly.",
+      "grader": "artifact.worker-brief",
+      "required": true
+    },
+    {
+      "id": "disjoint-ownership",
+      "description": "Worker scopes are disjoint and the shared package manifest remains with the integration owner.",
+      "grader": "artifact.disjoint-ownership",
+      "required": true
+    },
+    {
+      "id": "require-combined-evidence",
+      "description": "A worker's successful narrative is insufficient. Required checks run against the final combined source and policy and the delegator reviews the evidence.",
+      "grader": "review.delegation-handoff",
+      "required": true
+    }
+  ]
+}
