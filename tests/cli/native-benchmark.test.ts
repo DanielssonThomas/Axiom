@@ -34,6 +34,27 @@ test("refuses an immutable benchmark receipt for a dirty checkout", async () => 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test.runIf(process.platform === "linux")("keeps the operator credential out of Git status helpers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-git-environment-"));
+  const repository = join(root, "checkout");
+  const git = (...args: string[]) => promisify(execFile)("git", args, { cwd: repository });
+  try {
+    await mkdir(repository);
+    await git("init", "--quiet");
+    await git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "reviewed");
+    const sentinel = join(root, "credential-visible");
+    const hook = join(root, "fsmonitor");
+    await writeFile(hook, "#!/bin/sh\n[ -z \"$ANTHROPIC_API_KEY\" ] || touch '" + sentinel + "'\nprintf 'token\\0'\n", { mode: 0o700 });
+    await git("config", "core.fsmonitor", hook);
+    vi.stubEnv("ANTHROPIC_API_KEY", "fixture-canary");
+    await expect(requireCleanBenchmarkRevision(repository)).resolves.toMatch(/^[a-f0-9]{40}$/);
+    await expect(readFile(sentinel)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 const sandbox = process.platform === "linux" && process.env.AXIOM_TEST_BWRAP === "1";
 test.runIf(sandbox)("the sandbox hides verifier files and credentials and denies direct egress", async () => {
   const folder = await mkdtemp("/tmp/axiom-isolation-");
@@ -99,6 +120,14 @@ test.runIf(sandbox && program)("runs paired pinned Claude trials through the iso
     expect(Object.keys(result.observations)).toHaveLength(4);
     const review = await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest);
     expect(review).toMatchObject({ outcome: { status: "passed" }, report: { benchmarkOutcome: { status: "failed" } } });
+    const other = join(temporary, "different-revision");
+    const git = (...args: string[]) => promisify(execFile)("git", args, { cwd: temporary, timeout: 10_000 });
+    await git("clone", "--shared", "--quiet", "--no-checkout", repository, other);
+    await git("-C", other, "checkout", "--quiet", "--detach", revision);
+    await git("-C", other, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit",
+      "--quiet", "--allow-empty", "-m", "new reviewed revision");
+    expect((await reviewNativeBenchmark(other, result.evidenceDirectory, result.evidenceDigest)).outcome.status).toBe("blocked");
+    expect(review.report).toMatchObject({ provider: "injected", revision });
     const receipt = join(result.evidenceDirectory, "acceptance", `${result.report.attempts[2]!.id}.preview-capability.json`);
     const savedReceipt = await readFile(receipt);
     await rm(receipt);
