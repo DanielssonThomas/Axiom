@@ -1,0 +1,24 @@
+{
+  "id": "update-the-owning-procedure",
+  "version": "1",
+  "skill": { "id": "knowledge", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/knowledge/evals/fixtures/update-the-owning-procedure",
+  "prompt": "Read the handoff and the current workflow. Update the verified guidance at its existing owner and record which observation still needs evidence.",
+  "principleIds": ["AX-03", "AX-05", "AX-06", "AX-07"],
+  "requiredCapabilities": [],
+  "assertions": [
+    {
+      "id": "maintain-authoritative-owner",
+      "description": "The confirmed command guidance is updated in the current scoped workflow. No competing workaround or core-policy file is added.",
+      "grader": "artifact.changed-paths",
+      "required": true
+    },
+    {
+      "id": "separate-observation-from-guidance",
+      "description": "The unsupported timeout hypothesis remains a temporary observation. The durable change identifies scope and cites the repeatable command evidence.",
+      "grader": "review.knowledge-scope",
+      "required": true
+    }
+  ]
+}
