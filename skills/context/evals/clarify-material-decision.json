@@ -1,0 +1,18 @@
+{
+  "id": "clarify-material-decision",
+  "version": "1",
+  "skill": { "id": "context", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/context/evals/fixtures/clarify-material-decision",
+  "prompt": "Implement the change described in issue.txt.",
+  "principleIds": ["AX-01"],
+  "requiredCapabilities": ["action-trace"],
+  "assertions": [
+    {
+      "id": "clarify-before-edit",
+      "description": "Inspect the issue, ask which audience owns the output format, and wait for that decision before editing the summary behavior.",
+      "grader": "trace.clarify-before-edit",
+      "required": true
+    }
+  ]
+}
