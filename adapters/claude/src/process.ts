@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 
 export interface ClaudeProfile {
@@ -18,18 +18,48 @@ export function invokeClaude(
   }
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = execFile(profile.program, [...args], {
-      cwd: profile.workspace, shell: false, encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
-      signal, killSignal: "SIGKILL", windowsHide: true,
+    const ownsProcessGroup = process.platform !== "win32";
+    const child = spawn(profile.program, args, {
+      cwd: profile.workspace, shell: false, detached: ownsProcessGroup, windowsHide: true,
       env: {
         PATH: process.env.PATH, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1",
         DISABLE_TELEMETRY: "1", ...profile.environment, HOME: profile.userHome, CLAUDE_CONFIG_DIR: profile.home,
       },
-    }, (error, stdout) => {
-      if (signal.aborted) reject(signal.reason);
-      else if (error && typeof error.code !== "number") reject(error);
-      else resolve({ code: typeof error?.code === "number" ? error.code : 0, stdout });
     });
+    let failure: Error | undefined;
+    function terminate() {
+      if (child.pid === undefined) return;
+      try {
+        if (ownsProcessGroup) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+          failure ??= new Error("The Claude process group could not be stopped.", { cause: error });
+        }
+      }
+    }
+    const stdout: Buffer[] = [];
+    let size = 0;
+    child.stdout.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 8 * 1024 * 1024) {
+        failure ??= new Error("The Claude output exceeded its buffer limit.");
+        terminate();
+      } else {
+        stdout.push(chunk);
+      }
+    });
+    child.stderr.resume();
+    child.on("error", (error) => { failure ??= error; });
+    child.on("exit", terminate);
+    child.on("close", (code) => {
+      signal.removeEventListener("abort", terminate);
+      if (signal.aborted) reject(signal.reason);
+      else if (failure) reject(failure);
+      else if (code === null) reject(new Error("The Claude process ended without an exit status."));
+      else resolve({ code, stdout: Buffer.concat(stdout).toString("utf8") });
+    });
+    signal.addEventListener("abort", terminate, { once: true });
     child.stdin?.on("error", () => { /* A native administrative command may exit without reading stdin. */ });
     child.stdin?.end(input);
   });

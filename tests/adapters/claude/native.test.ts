@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
-  assessClaudeActivation, buildClaudeBundle, configureClaudeProfile, createClaudeBackend, executeClaudeSession,
+  assessClaudeActivation, buildClaudeBundle, configureClaudeProfile, createClaudeBackend, executeClaudeSession, type ClaudeBundleInput,
   observeClaudeInstallation, supportedVersion, validateClaudeBundle, workerBriefEnvironment,
 } from "../../../adapters/claude/src/index.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
@@ -24,6 +24,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
   let received = 0;
   let sawDigest = false;
   let sawSkills = false;
+  let sawInheritedProfiles = false;
   let offerDelegation = false;
   let sawWorkerBrief = false;
   const server = createServer((request, response) => {
@@ -34,6 +35,8 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
       received += 1;
       sawDigest = body.includes("Axiom policy digest: sha256:");
       sawSkills = body.includes("axiom:context");
+      sawInheritedProfiles = body.includes("# Axiom Core")
+        && body.includes("# Atomic UI profile") && body.includes("# Angular and Nx profile");
       sawWorkerBrief ||= body.includes("Axiom scoped worker brief:") && body.includes("worker-native");
       const sendDelegate = offerDelegation;
       offerDelegation = false;
@@ -66,9 +69,12 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     if (!address || typeof address === "string") throw new Error("No local fixture provider address.");
     const environment = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`, ANTHROPIC_AUTH_TOKEN: "fixture-no-credentials" };
     const profile = { program: executable!, home, userHome, workspace, environment };
-    const makeBundle = (version: string) => buildClaudeBundle({
+    const makeBundle = (version: string, selectedProfiles: ClaudeBundleInput["selectedProfiles"] = []) => buildClaudeBundle({
       repository: process.cwd(), destination: join(root, "bundles"), sourceRevision: "native-fixture",
-      policyVersion: "1", selectedProfiles: [], checks: {}, version,
+      policyVersion: "1", selectedProfiles, version,
+      checks: Object.fromEntries([
+        "ui-atomic.composition", "ui-atomic.reuse", "ui-atomic.verification", "angular-nx.structure", "angular-nx.native-tooling",
+      ].map((id) => [id, { kind: "mechanical" }])),
       skills: ["context", "delegate", "design", "diagnose", "knowledge", "verify"].map((id) => ({ id })),
     });
     const first = await makeBundle("1.0.0");
@@ -77,6 +83,8 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     expect((await observeClaudeInstallation(profile, "local")).discovered).toBe(false);
     await configureClaudeProfile(profile, "local", "install", first);
     await configureClaudeProfile(profile, "local", "install", first);
+    const changedAtSameVersion = await makeBundle("1.0.0", ["ui-atomic"]);
+    await expect(configureClaudeProfile(profile, "local", "update", changedAtSameVersion)).rejects.toThrow(/new version/i);
     expect(await observeClaudeInstallation(profile, "local")).toMatchObject({ discovered: true, selected: true });
 
     const options = { prompt: "Confirm the fixture.", model: host.model, maxBudgetUsd: 0.1 };
@@ -116,7 +124,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     const damagedFile = join(updated.plugin, "skills/context/SKILL.md");
     await writeFile(damagedFile, (await readFile(damagedFile, "utf8")) + "\nFixture integrity failure.\n");
     const invalid = await backend.run({ ...request, id: "failed-hook" }, new AbortController().signal);
-    expect(invalid.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/context loading/i) });
+    expect(invalid.outcome).toMatchObject({ status: "failed", reason: expect.stringMatching(/integrity check/i) });
     expect(sawDigest).toBe(false);
     expect(received).toBe(4);
 
@@ -146,6 +154,12 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     });
     await expect(configureClaudeProfile(foreign, "user", "uninstall")).rejects.toThrow(/different source/i);
     expect((await observeClaudeInstallation(foreign, "user")).selected).toBe(true);
+
+    const profiles = await makeBundle("1.0.2", ["angular-nx"]);
+    await configureClaudeProfile(profile, "local", "install", profiles);
+    const profiled = await executeClaudeSession(profile, options);
+    expect(assessClaudeActivation(profiles, host, profiled.observation).outcome.status).toBe("passed");
+    expect(sawInheritedProfiles).toBe(true);
   } finally {
     if (server.listening) {
       server.closeAllConnections();

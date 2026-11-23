@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { rolldown } from "rolldown";
 import { assembleBundles, writeBundles, type BundleAdapter, type BundleFile, type BundleInput, type WrittenBundle } from "@axiom/bundles";
-import { runtimeFile, type RuntimeManifest } from "./runtime.js";
+import { policyPaths, runtimeFile, type RuntimeManifest } from "./runtime.js";
 
 export const marketplace = "axiom-local";
 export const pluginId = `axiom@${marketplace}`;
@@ -42,7 +42,9 @@ async function compileHook(): Promise<string> {
 export async function buildClaudeBundle(input: ClaudeBundleInput): Promise<ClaudeBundle> {
   const { repository, destination, ...request } = input;
   const hookCode = await compileHook();
-  const command = { type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/" + hookRuntime], timeout: 10 };
+  const hooksFor = (policy: RuntimeManifest["policy"]) => policyPaths(policy).map((path) => ({
+    type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/" + hookRuntime, path], timeout: 10,
+  }));
   const adapter = (inventory?: RuntimeManifest): BundleAdapter => ({
     host: "claude", runtimeRoot, fixture: false, requiredCapabilities: ["native-package"],
     capabilities: [{ id: "native-package", available: true }],
@@ -56,7 +58,7 @@ export async function buildClaudeBundle(input: ClaudeBundleInput): Promise<Claud
         metadata: { policyDigest: policy.digest }, engines: { "claude-code": supportedVersion },
       }),
       json(`${runtimeRoot}/hooks/hooks.json`, {
-        hooks: { SessionStart: [{ matcher: "startup", hooks: [command] }], SubagentStart: [{ hooks: [command] }] },
+        hooks: { SessionStart: [{ matcher: "startup", hooks: hooksFor(policy) }], SubagentStart: [{ hooks: hooksFor(policy) }] },
       }),
       { path: `${runtimeRoot}/${hookRuntime}`, text: hookCode },
       ...(inventory ? [json(`${runtimeRoot}/${runtimeFile}`, inventory)] : []),

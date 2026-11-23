@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, lstat, mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { marketplace, pluginId, supportedVersion, type ClaudeBundle } from "./bundle.js";
 import { claudeVersion, nativeJson, type ClaudeProfile } from "./process.js";
-import { array, object } from "./runtime.js";
+import { array, object, runtimeFile } from "./runtime.js";
 
 export type ClaudeScope = "local" | "project" | "user";
 export type ClaudeLifecycle = "install" | "update" | "disable" | "uninstall";
@@ -16,6 +16,16 @@ async function installedPlugin(profile: ClaudeProfile, scope: ClaudeScope, signa
   const workspace = await realpath(profile.workspace);
   return (await pluginInventory(profile, signal)).find((plugin) => plugin.id === pluginId && plugin.scope === scope
     && (scope === "user" || plugin.projectPath === workspace));
+}
+
+function matchesVersion(plugin: Record<string, unknown>, version: string) {
+  return plugin.folderVersion === version || plugin.version === version;
+}
+
+async function matchesRuntimeInventory(plugin: Record<string, unknown>, expected: Buffer) {
+  if (typeof plugin.installPath !== "string" || !isAbsolute(plugin.installPath)) return false;
+  const current = await readFile(join(plugin.installPath, runtimeFile)).catch(() => undefined);
+  return current?.equals(expected) === true;
 }
 
 export async function observeClaudeInstallation(profile: ClaudeProfile, scope: ClaudeScope, signal?: AbortSignal) {
@@ -88,6 +98,13 @@ export async function configureClaudeProfile(
   await mkdir(lock);
   try {
     await validateClaudeBundle(profile, bundle, signal);
+    const expected = await readFile(join(bundle.plugin, runtimeFile));
+    if (selected && matchesVersion(selected, bundle.manifest.version) && !await matchesRuntimeInventory(selected, expected)) {
+      throw new Error("Claude caches plugin payloads by version. Use a new version to change the installed bundle.");
+    }
+    if (selected && action === "install" && !matchesVersion(selected, bundle.manifest.version)) {
+      throw new Error("Use the native update to change the installed version.");
+    }
     await stage(bundle.directory, destination, state);
     if (!existing) await nativeJson(profile, ["plugin", "marketplace", "add", destination], signal);
     if (selected && action === "update") {
@@ -97,8 +114,8 @@ export async function configureClaudeProfile(
       await nativeJson(profile, ["plugin", "install", pluginId, "--scope", scope], signal);
     }
     const current = await installedPlugin(profile, scope, signal);
-    if (!current || (current.folderVersion !== bundle.manifest.version && current.version !== bundle.manifest.version)) {
-      throw new Error("The declared native revision was not observed in the selected scope.");
+    if (!current || !matchesVersion(current, bundle.manifest.version) || !await matchesRuntimeInventory(current, expected)) {
+      throw new Error("The declared native bundle was not observed in the selected scope.");
     }
     const shouldBeEnabled = action === "install" || selected?.enabled !== false;
     if (current.enabled !== shouldBeEnabled) {

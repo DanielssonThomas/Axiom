@@ -6,6 +6,12 @@ import { isDeepStrictEqual } from "node:util";
 
 export const workerBriefKey = "AXIOM_CLAUDE_WORKER_BRIEF";
 export const runtimeFile = "axiom-runtime.json";
+export const corePolicyPath = "core/AXIOMS.md";
+export const workerBriefMarker = "\n\nAxiom scoped worker brief: ";
+
+export function policyPaths(policy: PolicyIdentity): readonly string[] {
+  return [corePolicyPath, ...policy.profiles.map(({ id }) => `profiles/${id}/PROFILE.md`)];
+}
 
 export interface RuntimeManifest {
   policy: PolicyIdentity;
@@ -63,7 +69,9 @@ export function workerBriefEnvironment(brief: TaskBrief) {
 }
 
 /** Verify installed native content before returning any context to the parent or delegated worker. */
-export async function runClaudeHook(root: string, raw: unknown, worker?: string): Promise<ClaudeHookResult> {
+export async function runClaudeHook(
+  root: string, raw: unknown, worker?: string, section = corePolicyPath,
+): Promise<ClaudeHookResult> {
   const startedAt = new Date().toISOString();
   const clock = performance.now();
   const input = object(raw);
@@ -77,7 +85,10 @@ export async function runClaudeHook(root: string, raw: unknown, worker?: string)
     const manifest = object(JSON.parse((await pluginFile(plugin, runtimeFile)).toString()));
     const policy = policyIdentitySchema.parse(manifest.policy);
     const files = array(manifest.files).map(object);
-    if (files.length === 0 || !files.some(({ path }) => path === "core/AXIOMS.md")) throw new Error("No runtime policy inventory.");
+    const paths = policyPaths(policy);
+    if (!paths.includes(section) || !paths.every((selected) => files.some(({ path }) => path === selected))) {
+      throw new Error("No complete runtime policy inventory.");
+    }
     const observed = await Promise.all(files.map(async ({ path, digest }) => {
       if (typeof path !== "string") throw new Error("Malformed native inventory.");
       const expected = digestSchema.parse(digest);
@@ -91,16 +102,13 @@ export async function runClaudeHook(root: string, raw: unknown, worker?: string)
     } else if (event === "SubagentStart" && (!workerTask || typeof input.agent_id !== "string" || !input.agent_id.trim())) {
       outcome = { status: "blocked", reason: "An applicable native worker brief or observed worker identity was missing." };
     }
-    const policyText = ["core/AXIOMS.md", ...policy.profiles.map(({ id }) => `profiles/${id}/PROFILE.md`)]
-      .map((path) => observed.find((file) => file.path === path)?.bytes?.toString().trimEnd() ?? "");
-    if (policyText.some((text) => !text)) outcome = { status: "failed", reason: "The installed policy document is incomplete." };
-    const context = [
-      `Axiom policy digest: ${policy.digest}`,
-      ...policyText,
-      ...(workerTask ? [`Axiom scoped worker brief: ${JSON.stringify(workerTask)}`] : []),
-    ].join("\n\n");
-    if (outcome.status === "passed" && context.length > 10_000) {
-      outcome = { status: "blocked", reason: "Claude's context limit would truncate the complete policy and task brief." };
+    const policyText = observed.find(({ path }) => path === section)?.bytes?.toString();
+    if (!policyText?.trim()) outcome = { status: "failed", reason: "The installed policy document is incomplete." };
+    const context = `Axiom policy digest: ${policy.digest}\nAxiom policy section: ${section}\n\n${policyText ?? ""}`
+      + (workerTask && section === corePolicyPath ? workerBriefMarker + JSON.stringify(workerTask) : "");
+    const output: HookOutput = { hookSpecificOutput: { hookEventName: event, additionalContext: context } };
+    if (outcome.status === "passed" && JSON.stringify(output).length + 1 > 10_000) {
+      outcome = { status: "blocked", reason: "Claude's context limit would truncate an installed policy section or task brief." };
     }
     const evidence = evidenceSchema.parse({
       id: randomUUID(), taskId: workerTask?.id ?? "claude-native-hook",
@@ -110,7 +118,7 @@ export async function runClaudeHook(root: string, raw: unknown, worker?: string)
       provenance: "observed", startedAt, durationMs: performance.now() - clock, artifacts: [], outcome,
     });
     if (outcome.status !== "passed") return { exitCode: 2, evidence, outcome };
-    return { exitCode: 0, evidence, outcome, output: { hookSpecificOutput: { hookEventName: event, additionalContext: context } } };
+    return { exitCode: 0, evidence, outcome, output };
   } catch {
     return { exitCode: 2, outcome: { status: "blocked", reason: "The installed native bundle could not be validated." } };
   }

@@ -1,6 +1,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { backendResultSchema, evidenceSchema, type BackendRequest, type TaskBrief } from "@axiom/contracts";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
@@ -43,23 +44,42 @@ test("uses shared observed evidence, fails on mutated native payload, and report
     policy: built.manifest.policy, provenance: "observed", outcome: { status: "passed" },
   });
   expect(loaded.output?.hookSpecificOutput.additionalContext).toContain(built.manifest.policy.digest);
+  const active = parseClaudeTrace([
+    { type: "system", subtype: "init", claude_code_version: host.version, model: host.model,
+      plugins: [{ source: "axiom@axiom-local" }], skills: ["axiom:context"] },
+    { type: "system", subtype: "hook_response", exit_code: 0, outcome: "success", hook_event: "SessionStart",
+      stdout: JSON.stringify(loaded.output) },
+  ].map((event) => JSON.stringify(event)).join("\n")).observation;
   await writeFile(join(built.plugin, "skills/context/SKILL.md"), "An intentionally failing integrity check.");
   const damaged = await runClaudeHook(built.plugin, input);
   expect(damaged).toMatchObject({ exitCode: 2, evidence: { outcome: { status: "failed" } } });
   expect(damaged.output).toBeUndefined();
 
-  const active = { discovered: true, selected: true, observedVersion: host.version,
-    skills: ["axiom:context"], policyDigests: [built.manifest.policy.digest] };
   expect(assessClaudeActivation(built, host, active)).toMatchObject({ discovery: true, selection: true, loading: true, outcome: { status: "passed" } });
   for (const observation of [
-    { ...active, discovered: false, selected: false, skills: [], policyDigests: [] },
-    { ...active, selected: false }, { ...active, policyDigests: [] }, { ...active, observedVersion: "1.0.0" },
+    { ...active, discovered: false, selected: false, skills: [], policySections: [] },
+    { ...active, selected: false }, { ...active, policySections: [] }, { ...active, observedVersion: "1.0.0" },
+    { ...active, observedModel: "different-model" },
   ]) {
     expect(assessClaudeActivation(built, host, observation).outcome.status).toBe("blocked");
   }
   expect(assessClaudeActivation(built, host, active, ["compaction"]).outcome).toMatchObject({
     status: "blocked", reason: expect.stringMatching(/compaction/i),
   });
+});
+
+test("does not count a digest announcement as proof that canonical policy loaded", async () => {
+  const built = await bundle();
+  const announce = {
+    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `Axiom policy digest: ${built.manifest.policy.digest}\n` },
+  };
+  const events = [
+    { type: "system", subtype: "init", claude_code_version: host.version, model: host.model,
+      plugins: [{ source: "axiom@axiom-local" }], skills: ["axiom:context"] },
+    { type: "system", subtype: "hook_response", exit_code: 0, outcome: "success", hook_event: "SessionStart",
+      stdout: JSON.stringify(announce) },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  expect(assessClaudeActivation(built, host, parseClaudeTrace(events).observation).outcome.status).toBe("blocked");
 });
 
 test("carries an explicitly staged shared brief into a native SubagentStart event and blocks lost context", async () => {
@@ -103,6 +123,19 @@ test("normalizes host events and token usage while excluding message content", (
 
 test("launches the native bounded benchmark command, resolves traces in the shared archive, and handles timeout", async () => {
   const program = join(root, "fake-claude");
+  const workspace = join(root, "workspace");
+  const archive = join(root, "archive");
+  const backend = createClaudeBackend({ program, artifacts: archive, maxBudgetUsd: 0.1 });
+  const request: BackendRequest = {
+    id: "fixture-run", caseId: "fixture", prompt: "fixture prompt", workspace, host, mode: "without_axiom", timeoutMs: 5000,
+    policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
+  };
+  if (process.platform !== "linux") {
+    expect(await backend.run(request, new AbortController().signal)).toMatchObject({
+      outcome: { status: "blocked", reason: expect.stringMatching(/unsupported/i) }, artifacts: [],
+    });
+    return;
+  }
   await writeFile(program, [
     "#!/usr/bin/env node",
     'if (process.argv[2] === "--version") { console.log("2.1.330 (Claude Code)"); process.exit(); }',
@@ -118,14 +151,7 @@ test("launches the native bounded benchmark command, resolves traces in the shar
     '});',
   ].join("\n"));
   await chmod(program, 0o700);
-  const workspace = join(root, "workspace");
-  const archive = join(root, "archive");
   await mkdir(workspace);
-  const backend = createClaudeBackend({ program, artifacts: archive, maxBudgetUsd: 0.1 });
-  const request: BackendRequest = {
-    id: "fixture-run", caseId: "fixture", prompt: "fixture prompt", workspace, host, mode: "without_axiom", timeoutMs: 5000,
-    policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
-  };
   const result = backendResultSchema.parse(await backend.run(request, new AbortController().signal));
   expect(result).toMatchObject({ outcome: { status: "passed" }, usage: { metering: "reported", inputTokens: 1 } });
   const trace = result.artifacts[0]!;
@@ -133,4 +159,45 @@ test("launches the native bounded benchmark command, resolves traces in the shar
   const timeout = await backend.run({ ...request, id: "timeout", prompt: "wait", timeoutMs: 150 }, new AbortController().signal);
   expect(timeout.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/time limit/i) });
   expect((await backend.run({ ...request, id: "cancelled" }, AbortSignal.abort())).outcome.status).toBe("not_run");
+});
+
+test("stops subprocess work when a launched benchmark reaches its deadline", async () => {
+  const program = join(root, "fake-claude");
+  const workspace = join(root, "workspace");
+  const childPid = join(root, "child-pid");
+  const afterDeadline = join(root, "child-finished");
+  const backend = createClaudeBackend({ program, artifacts: join(root, "archive"), maxBudgetUsd: 0.1 });
+  const request: BackendRequest = {
+    id: "fixture-deadline", caseId: "fixture", prompt: "fixture prompt", workspace, host, mode: "without_axiom", timeoutMs: 1000,
+    policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
+  };
+  if (process.platform !== "linux") {
+    expect(await backend.run(request, new AbortController().signal)).toMatchObject({
+      outcome: { status: "blocked", reason: expect.stringMatching(/unsupported/i) },
+    });
+    return;
+  }
+  const childScript = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(afterDeadline)}, "finished"), 1300);`;
+  await mkdir(workspace);
+  await writeFile(program, [
+    "#!/usr/bin/env node",
+    'if (process.argv[2] === "--version") { console.log("2.1.330 (Claude Code)"); process.exit(); }',
+    `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(childScript)}], { stdio: "ignore" });`,
+    `require("node:fs").writeFileSync(${JSON.stringify(childPid)}, String(child.pid));`,
+    "setInterval(() => {}, 1000);",
+  ].join("\n"), { mode: 0o700 });
+  try {
+    expect(await backend.run(request, new AbortController().signal)).toMatchObject({
+      outcome: { status: "blocked", reason: expect.stringMatching(/time limit/i) },
+    });
+    expect(Number(await readFile(childPid, "utf8"))).toBeGreaterThan(0);
+    await delay(600);
+    await expect(readFile(afterDeadline)).rejects.toHaveProperty("code", "ENOENT");
+  } finally {
+    const child = await readFile(childPid, "utf8").catch(() => undefined);
+    if (child) {
+      try { process.kill(Number(child), "SIGKILL"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+  }
 });
