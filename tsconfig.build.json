@@ -4,6 +4,7 @@
     { "path": "./packages/contracts" },
     { "path": "./packages/cli" },
     { "path": "./packages/policy" },
-    { "path": "./packages/evidence" }
+    { "path": "./packages/evidence" },
+    { "path": "./packages/verification" }
   ]
 }
