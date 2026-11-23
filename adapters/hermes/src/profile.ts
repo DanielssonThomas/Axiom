@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
-import { digestSchema, evidenceOutcomeSchema } from "@axiom/contracts";
-import type { EvidenceOutcome, PolicyIdentity } from "@axiom/contracts";
-import { readBundle, verifyBundle } from "./bundle.js";
+import { digestSchema, evidenceOutcomeSchema, taskBriefSchema } from "@axiom/contracts";
+import type { EvidenceOutcome, PolicyIdentity, TaskBrief } from "@axiom/contracts";
+import { digest, readBundle, verifyBundle } from "./bundle.js";
 
 export interface HermesProfile {
   /** Hermes launch root with a profiles directory. */
@@ -21,6 +22,7 @@ interface PluginChange {
 
 const ownerFile = "axiom-installed.json";
 const pluginName = "axiom";
+const sessionId = /^[a-z0-9_-]{1,128}$/i;
 
 function blocked(reason: string): EvidenceOutcome {
   return { status: "blocked", reason };
@@ -232,7 +234,7 @@ function observedLoad(
   const pending: EvidenceOutcome = { status: "not_run", reason: "No selected Hermes session observation." };
   const unread = (core: EvidenceOutcome) => ({ core, profiles: new Map<string, string>() });
   if (registration?.missingReason) return unread(blocked(registration.missingReason));
-  if (!registration || !session || !/^[a-z0-9_-]{1,128}$/i.test(session)) return unread(pending);
+  if (!registration || !session || !sessionId.test(session)) return unread(pending);
   const path = join(profile, ".axiom-hermes", `loaded-${session}.json`);
   if (!existsSync(path)) return unread(pending);
   if (realpathSync(path) !== path) return unread(blocked("The Hermes request observation cannot be redirected."));
@@ -303,9 +305,51 @@ export function inspectHermesActivation(target: HermesProfile, session?: string)
   }
 }
 
+export function formatHermesWorkerContext(brief: TaskBrief): string {
+  const expected = taskBriefSchema.parse(brief);
+  if (!expected.parentId) throw new Error("An Axiom worker brief needs a parent task ID.");
+  return "Axiom scoped worker brief:\n" + JSON.stringify(expected);
+}
+
+/** Verify the scoped brief and complete core in the first request of one native worker. */
+export function inspectHermesWorkerDelivery(
+  target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief,
+): { childSession?: string; outcome: EvidenceOutcome } {
+  const unavailable = (reason: string) => ({ outcome: blocked(reason) });
+  try {
+    const activation = inspectHermesActivation(target);
+    const expected = taskBriefSchema.parse(brief);
+    if (typeof parentSession !== "string" || !sessionId.test(parentSession)
+        || typeof workerId !== "string" || !sessionId.test(workerId) || !expected.parentId || !activation.enabled
+        || !activation.bundleDigest || !isDeepStrictEqual(activation.policy, expected.policy)) {
+      return unavailable("The selected Hermes policy, parent session, or worker identity could not be verified.");
+    }
+    if (expected.policy.profiles.length > 0) return unavailable("First-request worker delivery of selected Hermes profiles is unverified.");
+    const profile = profileDirectory(target);
+    const instance = currentInstallation(join(profile, "plugins", pluginName));
+    const path = join(profile, ".axiom-hermes", `delegated-${workerId}.json`);
+    if (!instance || !existsSync(path) || realpathSync(path) !== path) {
+      return unavailable("No current Hermes worker request observation was available.");
+    }
+    const receipt = JSON.parse(readFileSync(path, "utf8"));
+    const { childSession } = receipt;
+    if (receipt.digest !== activation.bundleDigest || receipt.instance !== instance || receipt.mechanism !== "first_llm_execution"
+        || receipt.parentSession !== parentSession || receipt.workerId !== workerId || typeof childSession !== "string"
+        || !sessionId.test(childSession) || childSession === parentSession || receipt.inspectable !== true
+        || typeof receipt.coreLoaded !== "boolean" || (receipt.briefDigest !== null && !digestSchema.safeParse(receipt.briefDigest).success)) {
+      return unavailable("The first Hermes worker request could not be matched to the selected policy and native spawn.");
+    }
+    return { childSession, outcome: receipt.coreLoaded && receipt.briefDigest === digest(formatHermesWorkerContext(expected))
+      ? { status: "passed" }
+      : { status: "failed", reason: "The first observed Hermes worker request omitted the complete core or staged task brief." } };
+  } catch {
+    return unavailable("The Hermes worker request observation could not be verified.");
+  }
+}
+
 /** Retain a native veto even when Hermes completes the conversation after a tool was blocked. */
 export function inspectHermesHookFailure(target: HermesProfile, packageDigest: string, session: string): EvidenceOutcome | undefined {
-  if (!/^[a-z0-9_-]{1,128}$/i.test(session)) return blocked("Hermes did not provide an inspectable session identity.");
+  if (!sessionId.test(session)) return blocked("Hermes did not provide an inspectable session identity.");
   const profile = profileDirectory(target);
   const instance = currentInstallation(join(profile, "plugins", pluginName));
   for (const status of ["failed", "blocked"] as const) {

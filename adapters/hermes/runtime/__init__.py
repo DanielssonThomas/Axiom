@@ -18,6 +18,7 @@ SECTION_LIMIT = 4000
 SESSION_LIMIT = 8000
 SESSION_ID = re.compile(r"[a-zA-Z0-9_-]{1,128}")
 PROFILE_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
+WORKER_BRIEF = "Axiom scoped worker brief:\n"
 
 
 def _report(folder, filename, observation, *, replace=True):
@@ -92,6 +93,36 @@ def _digest(content):
     return "sha256:" + hashlib.sha256(content).hexdigest()
 
 
+def _text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part["text"] for part in content if isinstance(part, dict)
+                       and part.get("type") in ("text", "input_text") and isinstance(part.get("text"), str))
+    return ""
+
+
+def _request_content(request):
+    """A Hermes Chat Completions or Responses request, with role-bearing policy text."""
+    if not isinstance(request, dict):
+        return None
+    if isinstance(request.get("messages"), list):
+        return request["messages"], [
+            _text(message.get("content")) for message in request["messages"]
+            if isinstance(message, dict) and message.get("role") == "system"
+        ]
+    if isinstance(request.get("input"), list):
+        return request["input"], [_text(request.get("instructions"))] + [
+            _text(item.get("content")) for item in request["input"] if isinstance(item, dict)
+            and item.get("type") == "message" and item.get("role") in ("developer", "system")
+        ]
+    return None
+
+
+def _contains_policy(system, frames):
+    return bool(frames) and any(all(frame in content for frame in frames) for content in system)
+
+
 def _profile_reads(messages, skills):
     """Match exact native profile reads to their tool results in the same provider request."""
     pending = {}
@@ -99,23 +130,28 @@ def _profile_reads(messages, skills):
     for message in messages:
         if not isinstance(message, dict):
             continue
+        calls = []
         if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
-            for call in message["tool_calls"]:
+            calls = [(call.get("id"), call.get("function")) for call in message["tool_calls"] if isinstance(call, dict)]
+        elif message.get("type") == "function_call":
+            calls = [(message.get("call_id"), message)]
+        if calls:
+            for call_id, function in calls:
                 try:
-                    function = call["function"]
-                    if function["name"] != "skill_view" or not isinstance(call["id"], str):
+                    if function["name"] != "skill_view" or not isinstance(call_id, str):
                         continue
                     args = json.loads(function["arguments"])
                     if isinstance(args, dict) and args.get("file_path") == "PROFILE.md" and args.get("name") in skills:
-                        pending[call["id"]] = args["name"]
+                        pending[call_id] = args["name"]
                 except (KeyError, TypeError, ValueError):
                     continue
-        elif message.get("role") == "tool" and isinstance(message.get("tool_call_id"), str):
-            name = pending.pop(message["tool_call_id"], None)
+        elif message.get("role") == "tool" or message.get("type") == "function_call_output":
+            call_id = message.get("tool_call_id", message.get("call_id"))
+            name = pending.pop(call_id, None) if isinstance(call_id, str) else None
             if name is None:
                 continue
             try:
-                result = json.loads(message["content"])
+                result = json.loads(_text(message.get("content", message.get("output"))))
                 if (isinstance(result, dict) and result.get("success") is True and result.get("name") == name
                         and result.get("file") == "PROFILE.md" and isinstance(result.get("content"), str)):
                     observed[skills[name]] = _digest(result["content"].encode("utf-8"))
@@ -128,14 +164,8 @@ def _observe_request(folder, identity, instance, frames, fingerprints, profile_s
     def observe(request, session_id="", **_kwargs):
         if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
             return
-        messages = request.get("messages") if isinstance(request, dict) else None
-        messages = messages if isinstance(messages, list) else []
-        system = [
-            message["content"] for message in messages
-            if isinstance(message, dict) and message.get("role") == "system"
-            and isinstance(message.get("content"), str)
-        ]
-        covered = bool(frames) and any(all(frame in content for frame in frames) for content in system)
+        messages, system = _request_content(request) or ([], [])
+        covered = _contains_policy(system, frames)
         _report(folder, "loaded-" + session_id + ".json", {
             "stage": "loaded" if covered else "incomplete",
             "digest": identity,
@@ -147,6 +177,57 @@ def _observe_request(folder, identity, instance, frames, fingerprints, profile_s
         })
 
     return observe
+
+
+def _worker_brief_digest(messages):
+    contexts = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        text = _text(message.get("content"))
+        if not text.startswith("CONTEXT:\n" + WORKER_BRIEF):
+            continue
+        context, separator, _ = text.removeprefix("CONTEXT:\n").partition("\n\nTASK:\n")
+        if separator:
+            contexts.append(context)
+    return _digest(contexts[0].encode("utf-8")) if len(contexts) == 1 else None
+
+
+def _observe_worker_delivery(ctx, folder, identity, instance, frames):
+    pending = {}
+
+    def started(parent_session_id=None, child_session_id=None, child_subagent_id=None, **_kwargs):
+        identifiers = (parent_session_id, child_session_id, child_subagent_id)
+        if parent_session_id != child_session_id and all(
+            isinstance(item, str) and SESSION_ID.fullmatch(item) for item in identifiers
+        ):
+            pending.setdefault(child_session_id, (parent_session_id, child_subagent_id))
+
+    def stopped(child_session_id=None, **_kwargs):
+        if isinstance(child_session_id, str):
+            pending.pop(child_session_id, None)
+
+    def observe(request, next_call, session_id="", **_kwargs):
+        lineage = pending.pop(session_id, None) if isinstance(session_id, str) else None
+        if lineage:
+            parent, worker = lineage
+            content = _request_content(request)
+            messages, system = content or ([], [])
+            try:
+                _report(folder, f"delegated-{worker}.json", {
+                    "digest": identity, "instance": instance, "mechanism": "first_llm_execution",
+                    "parentSession": parent, "childSession": session_id, "workerId": worker,
+                    "inspectable": content is not None, "coreLoaded": _contains_policy(system, frames),
+                    "briefDigest": _worker_brief_digest(messages),
+                }, replace=False)
+            except FileExistsError:
+                # Only the first native request can supply this receipt.
+                pass
+        return next_call()
+
+    ctx.register_hook("subagent_start", started)
+    ctx.register_hook("subagent_stop", stopped)
+    ctx.register_middleware("llm_execution", observe)
 
 
 def _profile_index(ctx, bundle, manifest):
@@ -230,4 +311,5 @@ def register(ctx):
     ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, instance, checker_digest))
     ctx.register_middleware("llm_request",
                             _observe_request(folder, identity, instance, frames, observation["sections"], profile_skills))
+    _observe_worker_delivery(ctx, folder, identity, instance, frames)
     _report(folder, "registered.json", observation)
