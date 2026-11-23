@@ -47,14 +47,14 @@ function expectedPass(required = true) {
 }
 
 const fixtureFiles = new Map<string, string>();
-for (const path of ["src/catalog-command.mjs", "src/catalog-key.mjs", "test/catalog-command.test.mjs", "test/catalog-acceptance.test.mjs"]) {
+for (const path of ["src/catalog-command.mjs", "src/catalog-key.mjs", "src/catalog-model.mjs", "test/catalog-command.test.mjs", "test/catalog-acceptance.test.mjs"]) {
   fixtureFiles.set(path, readFileSync(new URL(`fixtures/settled-catalog-repair/${path}`, casesDirectory), "utf8"));
 }
 const commandPath = "src/catalog-command.mjs";
 const regressionPath = "test/catalog-command.test.mjs";
 const acceptancePath = "test/catalog-acceptance.test.mjs";
 const completeRepair = new Map(fixtureFiles);
-completeRepair.set(commandPath, 'import { formatCatalogKey as key } from "./catalog-key.mjs"; export function run(value) { return key(value); }');
+completeRepair.set(commandPath, 'import { formatCatalogKey as key } from "./catalog-key.mjs";\n/** @returns {import("./catalog-model.mjs").CatalogKey} */\nexport function run(value) { return key(value); }');
 completeRepair.set(regressionPath, `${fixtureFiles.get(regressionPath)}
 test("formats multiword catalog keys", () => assert.equal(run("Alpine Camp"), "alpine-camp"));
 `);
@@ -94,6 +94,7 @@ describe("foundational cases", () => {
     expect(grade(evaluation, observed({ before: fixtureFiles, after: completeRepair, actions: discovery }))).toEqual({
       "inspect-and-proceed": expectedPass(),
       "use-owned-formatter": expectedPass(),
+      "reference-canonical-model": expectedPass(),
       "keep-small-owned-change": expectedPass(),
       "preserve-acceptance": expectedPass(),
       "demonstrate-prevention": expectedPass(),
@@ -128,12 +129,26 @@ describe("foundational cases", () => {
     expect(results["inspect-and-proceed"]).toEqual(expectedPass());
   });
 
+  test("rejects a same-module model copy even when the source file boundary is preserved", () => {
+    const evaluation = readCase("settled-catalog-repair.json");
+    const after = new Map(completeRepair);
+    after.set(commandPath, `/** @typedef {string} CatalogKey */
+const temporary = null;
+${after.get(commandPath)}`);
+    const results = grade(evaluation, observed({ before: fixtureFiles, after, actions: discovery }));
+    expect(results["keep-small-owned-change"]).toEqual(expectedPass());
+    expect(results["use-owned-formatter"]).toEqual(expectedPass());
+    expect(results["reference-canonical-model"]).toEqual({ status: "failed", required: true });
+  });
+
   test("rejects a stale GREEN, an unrelated RED, and a rewritten pristine acceptance test", () => {
     const evaluation = readCase("settled-catalog-repair.json");
     const setup = { before: fixtureFiles, after: completeRepair };
     const shadowed = new Map(completeRepair);
     shadowed.set(commandPath, 'import { formatCatalogKey } from "./catalog-key.mjs"; export function run(value) { const formatCatalogKey = (text) => text; return formatCatalogKey(value); }');
-    expect(grade(evaluation, observed({ ...setup, after: shadowed, actions: discovery }))["use-owned-formatter"]?.status).toBe("failed");
+    const shadowedResults = grade(evaluation, observed({ ...setup, after: shadowed, actions: discovery }));
+    expect(shadowedResults["use-owned-formatter"]?.status).toBe("failed");
+    expect(shadowedResults["reference-canonical-model"]?.status).toBe("failed");
 
     const stale = { ...successfulCheck, evidence: record({ source: earlier }) };
     expect(grade(evaluation, observed({ ...setup, actions: [...discovery.slice(0, -1), stale] }))["demonstrate-prevention"])
@@ -255,6 +270,18 @@ describe("shared grader compatibility", () => {
     expect(Object.values(grade(design, observed({ before, after })))).toEqual([
       { status: "failed", required: true }, { status: "failed", required: true },
     ]);
+  });
+
+  test("requires the returned value to come from the imported formatter", () => {
+    const design = readCase("skills/design/evals/reuse-summary-formatter.json", repository);
+    const header = 'import { formatSummary } from "./summary-format.mjs";';
+    const gradeCommand = (body: string) => grade(design, observed({
+      after: new Map([["command.mjs", `${header} export function run(rows) { ${body} }`]]),
+    }))["reuse-formatter"];
+
+    expect(gradeCommand("const text = formatSummary(rows); return text;")).toEqual(expectedPass());
+    expect(gradeCommand("return (formatSummary(rows), rows.length);")?.status).toBe("failed");
+    expect(gradeCommand("if (false) return formatSummary(rows); return rows.length;")?.status).toBe("failed");
   });
 
   test("blocks unregistered versions and graders without substituting a passing score", () => {

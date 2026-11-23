@@ -1,6 +1,6 @@
 import { evaluationCaseSchema } from "@axiom/contracts";
 import type { EvidenceOutcome } from "@axiom/contracts";
-import { gradeChangeBoundary, gradeFormatter, gradeProtectedArtifact, gradeUnavailableVerification } from "./artifacts.js";
+import { gradeCanonicalModel, gradeChangeBoundary, gradeFormatter, gradeProtectedArtifact, gradeUnavailableVerification } from "./artifacts.js";
 import { blocked } from "./observation.js";
 import type { GradingObservation } from "./observation.js";
 import { gradeClarification, gradeContext, gradeDelegation, gradeRegression } from "./traces.js";
@@ -51,6 +51,14 @@ const graders: Readonly<Record<string, Grader>> = {
     [repairCase]: { path: commandPath, module: "./catalog-key.mjs", symbol: "formatCatalogKey" },
     [designCase]: { path: "command.mjs", module: "./summary-format.mjs", symbol: "formatSummary" },
   }, gradeFormatter),
+  "artifact.canonical-model": deterministic({
+    [repairCase]: {
+      command: commandPath,
+      owner: "src/catalog-model.mjs",
+      module: "./catalog-model.mjs",
+      model: "CatalogKey",
+    },
+  }, gradeCanonicalModel),
   "artifact.command-boundary": deterministic({
     [repairCase]: [commandPath, regressionPath],
     [designCase]: ["command.mjs"],

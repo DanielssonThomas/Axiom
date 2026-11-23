@@ -1,0 +1,2 @@
+/** @typedef {string} CatalogKey */
+export {};

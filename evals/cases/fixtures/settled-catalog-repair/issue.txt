@@ -1,5 +1,6 @@
 Make the catalog command return the canonical key for an item label. For example,
 " Alpine Camp " must become "alpine-camp". The existing formatter in
 src/catalog-key.mjs owns this format for all catalog consumers. The target is
-settled. Keep the public run entry point, add the regression in the existing
+settled. Keep the public run entry point and its existing CatalogKey annotation.
+The model is owned by src/catalog-model.mjs. Add the regression in the existing
 command test (name it "formats multiword catalog keys"), and keep the acceptance test unchanged.

@@ -4,6 +4,19 @@ import ts from "typescript";
 import { blocked, changedPaths, failed, isUnchanged, observedCheck, passed } from "./observation.js";
 import type { GradingObservation } from "./observation.js";
 
+/** Exported function and arrow-function declarations supported by the seeded commands. */
+function* runDeclarations(file: ts.SourceFile): Iterable<ts.FunctionDeclaration | ts.VariableDeclaration> {
+  for (const node of file.statements) {
+    if (!ts.canHaveModifiers(node) || !ts.getModifiers(node)?.some(({ kind }) => kind === ts.SyntaxKind.ExportKeyword)) continue;
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "run") yield node;
+    if (ts.isVariableStatement(node)) {
+      for (const declaration of node.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === "run") yield declaration;
+      }
+    }
+  }
+}
+
 export interface FormatterExpectation {
   readonly path: string;
   readonly module: string;
@@ -38,45 +51,78 @@ export function gradeFormatter(expected: FormatterExpectation, observation: Grad
     }
   }
 
-  function usesFormatter(expression: ts.Node, seen = new Set<ts.Node>()): boolean {
-    if (seen.has(expression) || ts.isFunctionLike(expression)) return false;
+  // The fixture grader recognizes a directly returned call and its immutable
+  // local bindings. Other return paths require separate behavior evidence.
+  function usesFormatter(expression: ts.Expression, body?: ts.Block, seen = new Set<ts.Expression>()): boolean {
+    if (seen.has(expression)) return false;
     seen.add(expression);
-
+    if (ts.isParenthesizedExpression(expression)) return usesFormatter(expression.expression, body, seen);
     if (ts.isCallExpression(expression)) {
       const callee = checker.getSymbolAtLocation(expression.expression);
-      if (callee && imports.has(callee)) return true;
+      return !!callee && imports.has(callee);
     }
     if (ts.isIdentifier(expression)) {
       const declaration = checker.getSymbolAtLocation(expression)?.valueDeclaration;
-      if (declaration && ts.isVariableDeclaration(declaration)
-        && declaration.parent.flags & ts.NodeFlags.Const && declaration.initializer
-        && usesFormatter(declaration.initializer, seen)) {
-        return true;
-      }
+      return !!body && !!declaration && ts.isVariableDeclaration(declaration)
+        && ts.isVariableDeclarationList(declaration.parent) && ts.isVariableStatement(declaration.parent.parent)
+        && declaration.parent.parent.parent === body
+        && !!(declaration.parent.flags & ts.NodeFlags.Const) && !!declaration.initializer
+        && usesFormatter(declaration.initializer, body, seen);
     }
-    return !!ts.forEachChild(expression, (child) => usesFormatter(child, seen) ? true : undefined);
+    return false;
   }
 
-  function returnsFormatter(body: ts.Node): boolean {
-    if (ts.isReturnStatement(body)) return !!body.expression && usesFormatter(body.expression);
-    if (ts.isFunctionLike(body)) return false;
-    return !!ts.forEachChild(body, (child) => returnsFormatter(child) ? true : undefined);
+  function returnsFormatter(body: ts.Block): boolean {
+    const result = body.statements.at(-1);
+    return !!result && ts.isReturnStatement(result) && !!result.expression
+      && body.statements.slice(0, -1).every(ts.isVariableStatement)
+      && usesFormatter(result.expression, body);
   }
 
-  for (const node of file.statements) {
-    if (!ts.canHaveModifiers(node) || !ts.getModifiers(node)?.some(({ kind }) => kind === ts.SyntaxKind.ExportKeyword)) continue;
-    if (ts.isFunctionDeclaration(node) && node.name?.text === "run" && node.body && returnsFormatter(node.body)) return passed;
-    if (ts.isVariableStatement(node)) {
-      for (const declaration of node.declarationList.declarations) {
-        const fn = declaration.initializer;
-        if (ts.isIdentifier(declaration.name) && declaration.name.text === "run" && fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
-          if (ts.isBlock(fn.body) ? returnsFormatter(fn.body) : usesFormatter(fn.body)) return passed;
-        }
+  for (const declaration of runDeclarations(file)) {
+    if (ts.isFunctionDeclaration(declaration) && declaration.body && returnsFormatter(declaration.body)) return passed;
+    if (ts.isVariableDeclaration(declaration)) {
+      const fn = declaration.initializer;
+      if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) {
+        if (ts.isBlock(fn.body) ? returnsFormatter(fn.body) : usesFormatter(fn.body)) return passed;
       }
     }
   }
 
   return failed(`The public run entry point did not return a result using ${expected.symbol} from ${expected.module}.`);
+}
+
+interface ModelExpectation {
+  readonly command: string;
+  readonly owner: string;
+  readonly module: string;
+  readonly model: string;
+}
+
+export function gradeCanonicalModel(expected: ModelExpectation, observation: GradingObservation): EvidenceOutcome {
+  if (!isUnchanged(observation, expected.owner)) return failed(`The canonical model artifact changed: ${expected.owner}.`);
+  const source = observation.after.get(expected.command);
+  if (source === undefined) return failed(`Missing observed command source at ${expected.command}.`);
+  const file = ts.createSourceFile(expected.command, source, ts.ScriptTarget.ESNext, true);
+
+  function redeclaresModel(node: ts.Node): boolean {
+    if (ts.getJSDocTags(node).some((tag) => ts.isJSDocTypedefTag(tag) && tag.name?.text === expected.model)) return true;
+    return !!ts.forEachChild(node, (child) => redeclaresModel(child) ? true : undefined);
+  }
+  if (redeclaresModel(file)) return failed(`The command redeclares the canonical model ${expected.model}.`);
+
+  for (const declaration of runDeclarations(file)) {
+    const annotations = ts.isVariableDeclaration(declaration) && ts.isVariableDeclarationList(declaration.parent)
+      ? declaration.parent.parent
+      : declaration;
+    const type = ts.getJSDocReturnType(declaration) ?? ts.getJSDocReturnType(annotations);
+    if (type && ts.isImportTypeNode(type) && ts.isLiteralTypeNode(type.argument)
+      && ts.isStringLiteral(type.argument.literal) && type.argument.literal.text === expected.module
+      && type.qualifier && ts.isIdentifier(type.qualifier) && type.qualifier.text === expected.model) {
+      return passed;
+    }
+  }
+  return failed(`The public run entry point did not reference ${expected.model} from ${expected.module}.`);
 }
 
 export function gradeChangeBoundary(allowed: readonly string[], observation: GradingObservation): EvidenceOutcome {
