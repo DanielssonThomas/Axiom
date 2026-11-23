@@ -51,6 +51,15 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  packages/verification:
+    dependencies:
+      '@axiom/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@axiom/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+
 packages:
 
   '@emnapi/core@2.0.0-beta.2':
