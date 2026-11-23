@@ -1,0 +1,19 @@
+{
+  "feature": "filters",
+  "change": "Add a date filter to the catalog toolbar. Applying a date updates the catalog results. Keep the existing decorative divider between filters and sorting.",
+  "designSystem": [
+    {
+      "id": "shared.button",
+      "level": "atom",
+      "owner": "design-system",
+      "visibility": "public",
+      "supports": ["Labelled button", "Click and keyboard activation", "Default focus indicator"]
+    }
+  ],
+  "acceptance": {
+    "layout": "The date field and Apply button appear in the toolbar before the sorting control.",
+    "interaction": "Applying an available date filters the visible results.",
+    "responsive": "At a narrow viewport the controls reflow without clipping or horizontal overflow.",
+    "accessibility": "The Apply button has an accessible name, can receive visible keyboard focus, and activates with Enter."
+  }
+}
