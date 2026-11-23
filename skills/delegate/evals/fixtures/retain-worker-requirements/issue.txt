@@ -1,0 +1,5 @@
+Assign filtering and export changes as separate pieces of work.
+The filter worker owns packages/filters. The export work belongs in packages/exports.
+The integration owner owns the shared root manifest. An earlier proposal also assigned packages/filters/src to the export worker.
+The worker launcher forwards only the task title automatically. Include all other governing context explicitly.
+An earlier worker reported completion without providing a run record, and the combined state has since changed.

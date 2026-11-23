@@ -1,0 +1,3 @@
+The report preview crashes when a label is omitted. An absent or blank label should render as Untitled.
+Keep trimming explicitly supplied labels. The label formatter owns this behavior.
+The repository verifies this module with node --test label.test.mjs.

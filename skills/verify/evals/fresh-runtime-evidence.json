@@ -1,0 +1,30 @@
+{
+  "id": "fresh-runtime-evidence",
+  "version": "1",
+  "skill": { "id": "verify", "version": "1" },
+  "profiles": [],
+  "fixture": "skills/verify/evals/fixtures/fresh-runtime-evidence",
+  "prompt": "Read issue.txt and the run notes. Determine which parts of the filter change have been verified and what is still needed to report completion. Describe a representative acceptance test for the filter behavior.",
+  "principleIds": ["AX-04", "AX-05"],
+  "requiredCapabilities": [],
+  "assertions": [
+    {
+      "id": "verify-final-revision",
+      "description": "The report identifies the stale native result and requires a rerun on the current source before counting it.",
+      "grader": "evidence.current-source",
+      "required": true
+    },
+    {
+      "id": "report-live-gap",
+      "description": "The report records the browser check as blocked with the missing runner reason and does not claim completion.",
+      "grader": "evidence.live-gap",
+      "required": true
+    },
+    {
+      "id": "demonstrate-behavioral-coverage",
+      "description": "The proposed acceptance test checks observable filtering behavior with representative inputs and would fail for the missing behavior.",
+      "grader": "review.behavioral-test",
+      "required": true
+    }
+  ]
+}

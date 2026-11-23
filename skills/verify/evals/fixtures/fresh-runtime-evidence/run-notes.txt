@@ -1,0 +1,4 @@
+Native command: pnpm test
+Previous result: unit tests passed on revision a104.
+Current relevant source: revision a105 changed the filter application.
+The browser runner is unavailable. No browser interaction has been observed.

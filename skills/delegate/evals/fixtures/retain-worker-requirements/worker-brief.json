@@ -1,0 +1,16 @@
+{
+  "id": "filter-worker",
+  "parentId": "filter-and-export",
+  "objective": "Verify the filter behavior for the selected view",
+  "ownedPaths": ["packages/filters"],
+  "policy": {
+    "version": "1",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "profiles": [{ "id": "ui-atomic", "version": "1" }]
+  },
+  "criteria": [
+    { "id": "filter-smoke", "description": "Observe the requested filter behavior", "required": true }
+  ],
+  "requiredCapabilities": ["process-execution"],
+  "limits": { "timeoutMs": 30000, "maxAttempts": 2, "maxConcurrency": 1 }
+}
