@@ -156,6 +156,9 @@ function observedResult(raw: unknown, input: LiveInputs):
 export async function runLiveValidation(
   input: LiveInputs, baseline: ReviewedBaseline, runner?: TrustedLiveRunner, cancellation?: AbortSignal,
 ) {
+  positiveInteger(String(input.attempts), 25);
+  positiveInteger(String(input.timeoutMinutes), 15);
+  positiveInteger(String(input.tokenBudget), 1_000_000);
   const { host, model, os } = input;
   const attempts: LiveAttempt[] = Array.from({ length: input.attempts }, (_, index) => ({
     attempt: index + 1, outcome: notRun("The attempt has not started."),

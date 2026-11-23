@@ -17,7 +17,7 @@ const env = {
 };
 const request = () => parseLiveInputs(env);
 const supported = { status: "passed" } as const;
-const owner = { event: "workflow_dispatch", ref: "refs/heads/main", actor: "owner", triggeringActor: "untrusted-fixture", owner: "owner" };
+const owner = { event: "workflow_dispatch", ref: "refs/heads/main", actor: "owner", triggeringActor: "owner", owner: "owner" };
 
 function workflow(file: string) {
   return parse(readFileSync(new URL(`.github/workflows/${file}`, repository), "utf8"));
@@ -120,6 +120,14 @@ test("blocks absent native facilities, missing credentials, host evidence and re
     const report = await runLiveValidation(input, approved, runner);
     expect(report.outcome.status).toBe("blocked");
     expect(report.attempts.some((attempt) => attempt.outcome.status === "passed")).toBe(false);
+  }
+});
+
+test("rejects an empty or excessive direct run plan before the runner is opened", async () => {
+  const input = request();
+  for (const attempts of [0, 26]) {
+    await expect(runLiveValidation({ ...input, attempts }, approved, driver(async () => metered(input, 0))))
+      .rejects.toThrow(/limits/i);
   }
 });
 
