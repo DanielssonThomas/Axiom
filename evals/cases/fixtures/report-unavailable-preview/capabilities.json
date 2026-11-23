@@ -1,0 +1,5 @@
+{
+  "id": "browser-preview",
+  "available": false,
+  "reason": "The fixture has no running browser preview."
+}
