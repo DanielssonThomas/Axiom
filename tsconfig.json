@@ -5,7 +5,8 @@
     "noEmit": true,
     "paths": {
       "@axiom/contracts": ["./packages/contracts/src/index.ts"],
-      "@axiom/evidence": ["./packages/evidence/src/index.ts"]
+      "@axiom/evidence": ["./packages/evidence/src/index.ts"],
+      "@axiom/policy": ["./packages/policy/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "tests/**/*.ts", "vitest.config.mts"]

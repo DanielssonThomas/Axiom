@@ -5,6 +5,7 @@
     { "path": "./packages/cli" },
     { "path": "./packages/policy" },
     { "path": "./packages/evidence" },
-    { "path": "./packages/verification" }
+    { "path": "./packages/verification" },
+    { "path": "./packages/doctor" }
   ]
 }
