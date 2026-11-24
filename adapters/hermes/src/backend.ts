@@ -35,7 +35,7 @@ interface Trace {
 interface PreSessionFailure {
   model: string;
   exitCode: number;
-  startupFailure: "credentials-or-agent-init" | "other";
+  startupFailure: string;
 }
 
 const unknownUsage = { metering: "unknown", reason: "Hermes did not expose measured token usage." } as const;
@@ -64,6 +64,40 @@ function safeLabel(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9_.:/-]{1,160}$/.test(value);
 }
 
+function preSessionReason(error: unknown): string {
+  // Hermes discovery can append local paths and repair commands. Retain only fixed reasons.
+  const discovery = typeof error === "string"
+    ? /^Gateway (?:inaccessible|incompatible|starting): ([a-z_]+)(?: \([\s\S]*\))?$/.exec(error)?.[1]
+    : undefined;
+  switch (discovery ?? error) {
+    case "credentials or agent init failed":
+      return "Hermes reported a credential or agent initialization failure before establishing a session.";
+    case "authorization":
+    case "unsafe_control_path":
+    case "unsafe_control_peer":
+    case "unsafe_control_permissions":
+    case "unsafe_control_pointer":
+      return "Hermes refused access to the local gateway control channel before establishing a session.";
+    case "Gateway connection failed; no local fallback":
+    case "Gateway connection/read failed; no local fallback":
+    case "control_timeout":
+    case "deadline":
+      return "Hermes could not reach or communicate with the local gateway before establishing a session.";
+    case "workspace_unavailable":
+      return "The Hermes gateway could not access the disposable workspace before establishing a session.";
+    case "storage_unavailable":
+      return "The Hermes gateway could not access session storage before establishing a session.";
+    case "invalid_params":
+    case "permission_denied":
+    case "profile_mismatch":
+      return "The Hermes gateway rejected the native session startup request.";
+    case "launch_credentials_unavailable":
+      return "The Hermes gateway could not access launch credentials before establishing a session.";
+    default:
+      return "The native Hermes run failed before establishing a session.";
+  }
+}
+
 function normalize(stdout: string): Trace | PreSessionFailure | undefined {
   let model: string | undefined;
   let terminal: Pick<Trace, "session" | "exitCode" | "usage"> | Omit<PreSessionFailure, "model"> | undefined;
@@ -83,8 +117,7 @@ function normalize(stdout: string): Trace | PreSessionFailure | undefined {
     } else if (event?.type === "result") {
       if (!Number.isInteger(event.exit_code) || event.exit_code < 0) return;
       if (event.session_id === "" && event.exit_code > 0) {
-        terminal = { exitCode: event.exit_code,
-          startupFailure: event.error === "credentials or agent init failed" ? "credentials-or-agent-init" : "other" };
+        terminal = { exitCode: event.exit_code, startupFailure: preSessionReason(event.error) };
         continue;
       }
       if (!safeLabel(event.session_id)) return;
@@ -210,9 +243,7 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       if (!trace || trace.model !== request.host.model || trace.exitCode !== returned.code) {
         return blocked("The Hermes stream lacked a matching native model and terminal result.");
       }
-      if ("startupFailure" in trace) return blocked(trace.startupFailure === "credentials-or-agent-init"
-        ? "Hermes reported a credential or agent initialization failure before establishing a session."
-        : "The native Hermes run failed before establishing a session.");
+      if ("startupFailure" in trace) return blocked(trace.startupFailure);
 
       if (await realpath(traceDirectory) !== traceDirectory) return blocked("The Hermes trace archive changed during execution.");
       const name = `${request.id}-${randomUUID()}.json`;

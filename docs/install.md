@@ -127,7 +127,7 @@ The default runs two serial attempts of `reuse-summary-formatter`, with and with
 
 The benchmark report and archive retain only a fixed reason for recognized Codex provider model rejection, access refusal, or rate limits. An exit without a recognized terminal event retains the generic blocked reason. If the provider rejects the requested model, use `--model` with an exact identifier supported by the same signed-in account.
 
-Hermes reports a fixed blocked reason when a matching nonzero native result identifies a failure before a session was established. If Hermes reports a credential or agent initialization failure, check the selected auth root's default-profile login and the exact account-supported model. Native error text stays out of the archive.
+Hermes reports a fixed blocked reason for recognized failures before a session was established. The reasons can identify credential or agent initialization, local gateway access or connectivity, and gateway session startup. If Hermes reports a credential or agent initialization failure, check the selected auth root's default-profile login and the exact account-supported model. Raw native error text stays out of the archive.
 
 An attempt can finish native execution and still block during fixture capture or verifier preparation. The attempt keeps those outcomes separate and reports a fixed reason for recognized capture failures. Blocked capture leaves that arm’s assertions ungraded. Replay verifies the recorded grading observations and remains blocked when an arm has no observation. Run the same reviewed pair again after resolving the capture issue to collect both grades.
 
