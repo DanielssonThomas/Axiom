@@ -164,6 +164,30 @@ test("normalizes completed native events, rejects absent success and drops model
   expect(parseCodexTrace('{"type":"thread.started"}').outcome.status).not.toBe("passed");
 });
 
+test("classifies terminal native Codex provider errors without copying diagnostic text", () => {
+  const canary = "raw-provider-diagnostic-canary";
+  const modelRejected = "The native Codex provider rejected the requested model.";
+  const generic = "The native Codex turn failed before completing execution.";
+  const fixtures = [
+    [JSON.stringify({ error: { code: "unsupported_model", message: canary } }), modelRejected],
+    [JSON.stringify({ error: { code: null, message: "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account." } }), modelRejected],
+    ["The model `gpt-5.4` does not exist or you do not have access to it.", modelRejected],
+    [`unexpected status 401 Unauthorized: ${canary}`, "The native Codex provider refused access to the request."],
+    [`unexpected status 403 Forbidden: ${canary}`, "The native Codex provider refused access to the request."],
+    [`exceeded retry limit, last status: 429 Too Many Requests, ${canary}`, "The native Codex provider rate-limited the request."],
+    [`unclassified 404: ${canary} unsupported_model`, generic],
+    [JSON.stringify({ error: { message: `unsupported_model ${canary}` } }), generic],
+    [JSON.stringify({ error: { code: "unsupported_model", message: canary.repeat(200) } }), generic],
+  ] as const;
+  for (const [message, reason] of fixtures) {
+    const trace = parseCodexTrace(JSON.stringify({ type: "turn.failed", error: { message } }));
+    expect(trace.outcome).toEqual({ status: "blocked", reason });
+    expect(JSON.stringify(trace)).not.toContain(canary);
+  }
+  const nonterminal = parseCodexTrace(JSON.stringify({ type: "error", message: `unexpected status 401 Unauthorized: ${canary}` }));
+  expect(nonterminal.outcome).toEqual({ status: "blocked", reason: "No complete Codex turn was observed." });
+});
+
 test("does not present parent CLI counters as aggregate token usage for a delegated attempt", () => {
   const trace = [
     { type: "thread.started", thread_id: "parent" },
@@ -258,6 +282,13 @@ test.runIf(process.platform === "linux")("checks native ChatGPT auth and never a
     '}',
     'if (a[0] === "sandbox") { assert.equal(a[2], "axiom-benchmark"); process.exit(); }',
     'assert(a.includes("exec") && a.includes("--ephemeral") && !a.includes("--sandbox"));',
+    `if (fs.existsSync("exit-before-events")) { console.error(${JSON.stringify(canary)}); process.exit(1); }`,
+    'if (fs.existsSync("reject-model")) {',
+    ` const raw = ${JSON.stringify(canary)};`,
+    ' console.error(raw);',
+    ' console.log(JSON.stringify({ type: "turn.failed", error: { message: JSON.stringify({ error: { code: "unsupported_model", message: raw } }) } }));',
+    ' process.exit(1);',
+    '}',
     'fs.writeFileSync("executed", "yes");',
     'console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: ' + JSON.stringify(canary) + ' } }));',
     'console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } }));',
@@ -274,5 +305,15 @@ test.runIf(process.platform === "linux")("checks native ChatGPT auth and never a
   const result = await run();
   expect(result).toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
   expect(JSON.stringify(result)).not.toContain(canary);
+  await writeFile(join(workspace, "reject-model"), "");
+  const rejected = await run();
+  expect(rejected).toMatchObject({ outcome: { status: "blocked", reason: "The native Codex provider rejected the requested model." },
+    artifacts: [], usage: { metering: "unknown" } });
+  expect(JSON.stringify(rejected)).not.toContain(canary);
+  await writeFile(join(workspace, "exit-before-events"), "");
+  const earlyExit = await run();
+  expect(earlyExit).toMatchObject({ outcome: { status: "blocked", reason: "The native Codex CLI exited before completing the attempt." },
+    artifacts: [] });
+  expect(JSON.stringify(earlyExit)).not.toContain(canary);
   await expect(readFile(join(authHome, "auth.json"), "utf8")).resolves.toBe(canary);
 });

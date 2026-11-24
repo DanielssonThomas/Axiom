@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,53 @@ import { EvidenceStore, snapshotSource } from "../../../packages/evidence/src/in
 import { openLoopback } from "../../integration/hosts/loopback.js";
 
 const executable = process.env.AXIOM_TEST_CODEX_BINARY;
+
+test.runIf(executable && process.platform === "linux")("keeps the native model rejection on a nonzero Codex exit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-codex-rejected-model-"));
+  const workspace = join(root, "workspace");
+  const artifacts = join(root, "archive");
+  const canary = "synthetic-private-provider-detail";
+  const requestedModels: string[] = [];
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ object: "list", data: [{ id: "a-different-model", object: "model" }] }));
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk);
+    requestedModels.push(JSON.parse(Buffer.concat(chunks).toString("utf8")).model);
+    response.writeHead(400, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: { code: "unsupported_model", type: "invalid_request_error", message: canary } }));
+  });
+  server.listen(0, "127.0.0.1");
+  try {
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("The disposable Codex provider did not start.");
+    await mkdir(workspace);
+    const backend = createCodexBackend({ program: executable!, artifacts, configToml: [
+      'model_provider = "fixture"', "[model_providers.fixture]", 'name = "Disposable fixture"',
+      `base_url = "http://127.0.0.1:${address.port}/v1"`, 'wire_api = "responses"',
+      "requires_openai_auth = false", "request_max_retries = 0", "stream_max_retries = 0", "",
+    ].join("\n") });
+    const model = "gpt-5.4";
+    const result = await backend.run({ id: "model-rejected", caseId: "fixture", mode: "without_axiom",
+      prompt: "Acknowledge the disposable model fixture.", workspace, timeoutMs: 12_000,
+      host: { agent: "codex", version: supportedVersion, os: "linux", surface: "cli", model },
+      policy: { version: "1", digest: `sha256:${"0".repeat(64)}`, profiles: [] },
+    }, new AbortController().signal);
+    expect(requestedModels).toEqual([model]);
+    expect(result.outcome).toEqual({ status: "blocked", reason: "The native Codex provider rejected the requested model." });
+    expect(JSON.stringify(result)).not.toContain(canary);
+    expect(result.artifacts).toHaveLength(1);
+    expect(JSON.parse(await readFile(join(artifacts, result.artifacts[0]!.location), "utf8"))).toEqual({ actions: [] });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15_000);
 
 test.runIf(Boolean(executable) && process.platform === "linux")(
   "runs a paired native ChatGPT file profile against localhost with credential paths outside the tool sandbox", async () => {

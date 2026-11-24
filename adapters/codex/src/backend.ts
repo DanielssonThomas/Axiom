@@ -20,6 +20,36 @@ export interface CodexTrace {
   usage: Usage;
 }
 
+const providerFailureReasons = {
+  model: "The native Codex provider rejected the requested model.",
+  access: "The native Codex provider refused access to the request.",
+  rateLimit: "The native Codex provider rate-limited the request.",
+};
+
+const chatGptModelRejection = /^The '[\w][\w./:-]{0,159}' model is not supported when using Codex with a ChatGPT account\.$/;
+const missingModel = /^The model `[\w][\w./:-]{0,159}` does not exist or you do not have access to it\.$/;
+
+function providerFailure(message: unknown): string | undefined {
+  if (typeof message !== "string") return;
+  // Inspect only known native status prefixes or a small error envelope. Report fixed reasons.
+  const prefix = message.slice(0, 128).trimStart();
+  if (/^unexpected status (?:401 Unauthorized|403 Forbidden)(?::|,|$)/.test(prefix)) return providerFailureReasons.access;
+  if (/^(?:unexpected status |exceeded retry limit, last status: )429 Too Many Requests(?::|,|$)/.test(prefix)) {
+    return providerFailureReasons.rateLimit;
+  }
+  if (message.length > 4096) return;
+  const text = message.trim();
+  if (chatGptModelRejection.test(text) || missingModel.test(text)) return providerFailureReasons.model;
+  if (!text.startsWith("{")) return;
+  try {
+    const error = object(object(JSON.parse(text)).error);
+    if (error.code === "unsupported_model" || error.code === "model_not_found" ||
+        (typeof error.message === "string" && (chatGptModelRejection.test(error.message) || missingModel.test(error.message)))) {
+      return providerFailureReasons.model;
+    }
+  } catch { /* Unrecognized terminal diagnostics stay generic. */ }
+}
+
 export function parseCodexTrace(output: string, sensitiveValues: readonly string[] = []): CodexTrace {
   const actions: NormalizedAction[] = [];
   let usage: Usage = { metering: "unknown", reason: "Codex did not report validated token usage." };
@@ -40,7 +70,7 @@ export function parseCodexTrace(output: string, sensitiveValues: readonly string
       if (parsed.success) usage = parsed.data;
       outcome = { status: "passed" };
     } else if (event.type === "turn.failed") {
-      outcome = { status: "blocked", reason: "The native Codex turn failed before completing execution." };
+      outcome = { status: "blocked", reason: providerFailure(object(event.error).message) ?? "The native Codex turn failed before completing execution." };
     } else if (event.type === "item.completed") {
       const item = object(event.item);
       if (item.type === "collab_tool_call" && array(item.receiver_thread_ids).length > 0) {
@@ -222,7 +252,9 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
         await writeFile(join(storage, location), serialized, { flag: "wx", mode: 0o600 });
         artifacts.push({ kind: "action-trace", location, digest: digest(serialized) });
       }
-      if (execution.code !== 0) return result({ status: "blocked", reason: "The native Codex CLI exited before completing the attempt." });
+      if (execution.code !== 0 && (trace.outcome.status !== "blocked" || !Object.values(providerFailureReasons).includes(trace.outcome.reason))) {
+        return result({ status: "blocked", reason: "The native Codex CLI exited before completing the attempt." });
+      }
       return result(trace.outcome);
     } catch {
       if (callerSignal.aborted) return result({ status: "blocked", reason: "The native Codex attempt was cancelled." });
