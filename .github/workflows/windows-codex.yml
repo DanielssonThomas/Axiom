@@ -1,0 +1,85 @@
+name: Windows Codex transport
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-codex.yml
+      - adapters/codex/**
+      - core/**
+      - docs/compatibility.md
+      - packages/**
+      - profiles/**
+      - skills/**
+      - tests/integration/hosts/**
+      - package.json
+      - pnpm-lock.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  loopback:
+    name: Pinned Windows Codex loopback
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 12
+    env:
+      REVIEWED_REVISION: ${{ github.event.pull_request.head.sha }}
+      CODEX_VERSION: 0.172.0-alpha.2
+      CODEX_INTEGRITY: sha512-afD4MW+FKYPw/cqmM4DdEZgsxelUfuBnz8kjg3aRCrRyuO2fpqgepmws4D8f9HxNRR+VeUG7FNk/wZ3aWFl+5g==
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.REVIEWED_REVISION }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Stage the pinned Windows x64 package
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -cne $env:REVIEWED_REVISION) { throw 'Checkout differs from the reviewed PR head.' }
+          if ((node -p 'process.platform + "-" + process.arch') -cne 'win32-x64') { throw 'Expected a Windows x64 runner.' }
+          $native = Join-Path $env:RUNNER_TEMP 'axiom-native-codex'
+          New-Item $native -ItemType Directory | Out-Null
+          $pinned = "${env:CODEX_VERSION}-win32-x64"
+          $metadata = npm pack --ignore-scripts --json --registry https://registry.npmjs.org --pack-destination $native "@openai/codex@$pinned" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $metadata.version -cne $pinned -or $metadata.integrity -cne $env:CODEX_INTEGRITY) {
+            throw 'The Windows Codex package did not match the pinned version and integrity.'
+          }
+          tar.exe -xzf (Join-Path $native $metadata.filename) -C $native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binary = Join-Path $native 'package/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+          if (-not (Test-Path $binary -PathType Leaf) -or (& $binary --version) -cne "codex-cli $env:CODEX_VERSION") {
+            throw 'The pinned Windows Codex executable did not start.'
+          }
+          "AXIOM_TEST_CODEX_BINARY=$binary" >> $env:GITHUB_ENV
+      - name: Verify installed native lifecycle and Plan-mode clarification
+        shell: pwsh
+        run: |
+          $trace = Join-Path $env:RUNNER_TEMP 'axiom-windows-test.log'
+          pnpm exec vitest run --maxWorkers=1 tests/integration/hosts/codex-windows.test.ts tests/integration/hosts/codex-clarification.test.ts | Tee-Object -FilePath $trace
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $reports = @(Get-Content $trace | Where-Object {
+            $_ -match '^\{"kind":"installed-(?:windows-codex-lifecycle|codex-app-server-clarification)-loopback"'
+          } | ForEach-Object { $_ | ConvertFrom-Json })
+          $kinds = ($reports.kind | Sort-Object) -join ','
+          if ($kinds -cne 'installed-codex-app-server-clarification-loopback,installed-windows-codex-lifecycle-loopback') {
+            throw 'Both native test receipts are required.'
+          }
+          foreach ($report in $reports) {
+            if ($report.source.revision -cne $env:REVIEWED_REVISION -or $report.host.os -cne 'win32' -or
+                $report.host.version -cne $env:CODEX_VERSION -or $report.transport.status -cne 'passed' -or
+                $report.qualification.status -cne 'blocked') { throw 'The Windows receipt does not match the reviewed run.' }
+          }
+          $reports | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $env:RUNNER_TEMP 'axiom-windows-codex.json')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: axiom-windows-codex-transport
+          path: ${{ runner.temp }}/axiom-windows-codex.json
+          if-no-files-found: error
+          retention-days: 7

@@ -25,7 +25,7 @@ Adapter results and validation details are recorded in [Claude Code PR #36](http
 | --- | --- | --- |
 | Linux x86-64 | `passed` on the adapter convergence tree. | Loopback observations above. Final behavioral qualification remains incomplete. |
 | macOS | `passed` on the hosted adapter convergence checks. | `not_run` for Claude Code, Codex, and Hermes. |
-| Windows | `passed` on the hosted adapter convergence checks. | `not_run` for Claude Code, Codex, and Hermes. |
+| Windows | `passed` on the hosted adapter convergence checks. | Claude Code and Hermes `not_run`. The separate [Windows Codex workflow](../.github/workflows/windows-codex.yml) reports the pinned x64 native loopback disposition. The production Axiom installer remains `blocked` for Windows. |
 
 The reviewed combined adapter tree passed 191 Linux tests with the pinned native agent and Angular/Nx fixtures enabled. Hosted checks passed on all three operating systems. Those jobs leave the native agent probes opt-in and establish deterministic platform coverage. IDE, desktop, and other host versions and surfaces are `not_run`. [Combined validation](https://github.com/DanielssonThomas/Axiom/pull/36) · [Hosted matrix](https://github.com/DanielssonThomas/Axiom/actions/runs/45236340604)
 
@@ -68,7 +68,9 @@ Standard evidence reports aggregate usage as unknown and hard budget enforcement
 
 On Linux, Hermes Agent 0.23.3 exposed a native pending clarification through the authenticated gateway Runs API with the `clarify` toolset explicitly enabled for `api_server`. A disposable Axiom profile and scripted localhost provider exercised the reviewed target-audience fixture. The pending prompt and execution generation matched the replayable run events. Wrong and stale controls left the run waiting, the matching skip resumed it, and a repeat submission was rejected. The fixture stayed unchanged, and the independent grader required the correlated question. External-model clarification and installed gateway behavior on macOS and Windows remain `not_run`.
 
-On Linux, Codex 0.172.0-alpha.2 exposed a blocking `item/tool/requestUserInput` request through the stdio app-server in Plan mode with experimental API capabilities enabled. A disposable Axiom profile and a scripted localhost provider exercised the request with a read-only workspace. A response with a wrong JSON-RPC ID left the turn waiting. The matching response carried no answers and resumed the turn without changing the fixture. External-model clarification and installed app-server behavior on macOS and Windows remain `not_run`.
+On Linux, Codex 0.172.0-alpha.2 exposed a blocking `item/tool/requestUserInput` request through the stdio app-server in Plan mode with experimental API capabilities enabled. A disposable Axiom profile and a scripted localhost provider exercised the request with a read-only workspace. A response with a wrong JSON-RPC ID left the turn waiting. The matching response carried no answers and resumed the turn without changing the fixture. External-model clarification and installed app-server behavior on macOS remain `not_run`.
+
+The hosted Windows job runs that same Plan-mode probe and a separate native `exec` lifecycle fixture with the pinned Windows executable. It stages assembled Axiom artifacts through Codex's local marketplace in a disposable profile. Only a run that observes the installed and updated policy, the corresponding missing-activation and disabled controls, removal, and blocking Plan-mode clarification emits both Windows receipts. The fixtures use a scripted localhost provider. The production Axiom installer, model behavior, and production worker evidence stay outside this check.
 
 ## Run the installed-host matrix
 

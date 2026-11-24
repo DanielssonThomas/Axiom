@@ -10,8 +10,10 @@ import { loadBundleWorkspace } from "../../../packages/bundles/src/index.js";
 import { codexDigest } from "../../../packages/cli/src/native-install.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
 import { openLoopback } from "./loopback.js";
+import { windowsCodexEnvironment, windowsCodexFixture, windowsSandbox } from "./windows-codex.js";
 
 const executable = process.env.AXIOM_TEST_CODEX_BINARY;
+const windows = process.platform === "win32";
 const model = "gpt-5.4";
 const prompt = "Inspect the disposable report format question fixture.";
 const fixture = "The report format is undecided.\n";
@@ -27,12 +29,14 @@ interface RpcMessage {
   params?: { turn?: { id: string; status: string }; threadId?: string; turnId?: string; itemId?: string };
 }
 
-test.runIf(executable && process.platform === "linux")(
+test.runIf(executable && (process.platform === "linux" || windows))(
   "installed Codex Plan-mode app-server waits for the matching native request-user-input response", async () => {
     const source = process.cwd();
     const revision = await snapshotSource({ root: source });
     const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-codex-app-clarify-")));
-    const profile = { program: executable!, workspace: join(root, "fixture"), home: join(root, "codex"), userHome: join(root, "user") };
+    const userHome = join(root, "user");
+    const profile = { program: executable!, workspace: join(root, "fixture"), home: join(root, "codex"), userHome,
+      ...(windows && { environment: windowsCodexEnvironment(userHome) }) };
     const loopback = await openLoopback("codex", model, ({ text, toolResults }) =>
       text.includes(prompt) && !toolResults.length ? { name: "request_user_input", arguments: JSON.stringify({ questions }) } : undefined,
     );
@@ -47,12 +51,13 @@ test.runIf(executable && process.platform === "linux")(
       await writeFile(join(profile.home, "config.toml"), [
         'model_provider = "fixture"', "[model_providers.fixture]", 'name = "Disposable fixture"',
         `base_url = "${loopback.endpoint}/v1"`, 'wire_api = "responses"', "requires_openai_auth = false",
-        "request_max_retries = 0", "stream_max_retries = 0", "",
+        "request_max_retries = 0", "stream_max_retries = 0", "", ...(windows ? [windowsSandbox] : []),
       ].join("\n"));
       expect(await nativeVersion(profile, signal)).toBe(supportedVersion);
       const { catalog } = loadBundleWorkspace(source);
       const bundle = await buildCodexBundle({ source, destination: join(root, "bundle"), version: "0.1.0", catalog, profiles: [] });
-      await configureCodexProfile(profile, "install", bundle, signal);
+      if (windows) await windowsCodexFixture(profile, root, signal).install(bundle);
+      else await configureCodexProfile(profile, "install", bundle, signal);
 
       let client: ((message: unknown) => void) | undefined;
       let endInput: (() => void) | undefined;
