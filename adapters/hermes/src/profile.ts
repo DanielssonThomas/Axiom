@@ -311,9 +311,8 @@ export function formatHermesWorkerContext(brief: TaskBrief): string {
   return "Axiom scoped worker brief:\n" + JSON.stringify(expected);
 }
 
-/** Verify the scoped brief and complete core in the first request of one native worker. */
-export function inspectHermesWorkerDelivery(
-  target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief,
+function inspectWorker(
+  target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief, verifyProfiles: boolean,
 ): { childSession?: string; outcome: EvidenceOutcome } {
   const unavailable = (reason: string) => ({ outcome: blocked(reason) });
   try {
@@ -324,10 +323,15 @@ export function inspectHermesWorkerDelivery(
         || !activation.bundleDigest || !isDeepStrictEqual(activation.policy, expected.policy)) {
       return unavailable("The selected Hermes policy, parent session, or worker identity could not be verified.");
     }
-    if (expected.policy.profiles.length > 0) return unavailable("First-request worker delivery of selected Hermes profiles is unverified.");
+    if (!verifyProfiles && expected.policy.profiles.length > 0) {
+      return unavailable("First-request worker delivery of selected Hermes profiles is unverified.");
+    }
+    if (verifyProfiles && expected.policy.profiles.length === 0) return unavailable("No Hermes worker profiles were selected for retrieval.");
     const profile = profileDirectory(target);
-    const instance = currentInstallation(join(profile, "plugins", pluginName));
-    const path = join(profile, ".axiom-hermes", `delegated-${workerId}.json`);
+    const installed = join(profile, "plugins", pluginName);
+    const instance = currentInstallation(installed);
+    const observations = join(profile, ".axiom-hermes");
+    const path = join(observations, `delegated-${workerId}.json`);
     if (!instance || !existsSync(path) || realpathSync(path) !== path) {
       return unavailable("No current Hermes worker request observation was available.");
     }
@@ -339,12 +343,47 @@ export function inspectHermesWorkerDelivery(
         || typeof receipt.coreLoaded !== "boolean" || (receipt.briefDigest !== null && !digestSchema.safeParse(receipt.briefDigest).success)) {
       return unavailable("The first Hermes worker request could not be matched to the selected policy and native spawn.");
     }
-    return { childSession, outcome: receipt.coreLoaded && receipt.briefDigest === digest(formatHermesWorkerContext(expected))
-      ? { status: "passed" }
-      : { status: "failed", reason: "The first observed Hermes worker request omitted the complete core or staged task brief." } };
+    if (!receipt.coreLoaded || receipt.briefDigest !== digest(formatHermesWorkerContext(expected))) {
+      return { childSession, outcome: { status: "failed", reason: "The first observed Hermes worker request omitted the complete core or staged task brief." } };
+    }
+    if (!verifyProfiles) return { childSession, outcome: { status: "passed" } };
+
+    const profilePath = join(observations, `delegated-profiles-${workerId}.json`);
+    if (!existsSync(profilePath) || realpathSync(profilePath) !== profilePath) {
+      return { childSession, outcome: blocked("No completed Hermes worker request was observed after the initial request.") };
+    }
+    const retrieval = JSON.parse(readFileSync(profilePath, "utf8"));
+    const bundle = readBundle(installed);
+    if (bundle.digest !== activation.bundleDigest || retrieval.digest !== bundle.digest || retrieval.instance !== instance
+        || retrieval.mechanism !== "subsequent_llm_execution" || retrieval.workerId !== workerId
+        || retrieval.parentSession !== parentSession || retrieval.childSession !== childSession || !Array.isArray(retrieval.profiles)) {
+      return { childSession, outcome: blocked("The Hermes profile retrieval could not be matched to the selected policy and native worker.") };
+    }
+    const observed = new Map<string, string>();
+    for (const entry of retrieval.profiles) {
+      if (!expected.policy.profiles.some(({ id }) => id === entry?.id) || observed.has(entry.id)
+          || !digestSchema.safeParse(entry.digest).success) {
+        return { childSession, outcome: blocked("The Hermes worker profile retrieval observation is malformed.") };
+      }
+      observed.set(entry.id, entry.digest);
+    }
+    const complete = expected.policy.profiles.every(({ id }) => observed.get(id) !== undefined
+      && observed.get(id) === bundle.files.find(({ path }) => path === `profiles/${id}/PROFILE.md`)?.digest);
+    return { childSession, outcome: complete ? { status: "passed" }
+      : { status: "failed", reason: "No completed Hermes worker request showed exact retrieval of every selected profile." } };
   } catch {
     return unavailable("The Hermes worker request observation could not be verified.");
   }
+}
+
+/** Verify the scoped brief and complete core in the first request of one native worker. */
+export function inspectHermesWorkerDelivery(target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief) {
+  return inspectWorker(target, parentSession, workerId, brief, false);
+}
+
+/** Verify first-request core and brief, followed by exact native profile retrieval in the same worker. */
+export function inspectHermesWorkerProfileRetrieval(target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief) {
+  return inspectWorker(target, parentSession, workerId, brief, true);
 }
 
 /** Retain a native veto even when Hermes completes the conversation after a tool was blocked. */

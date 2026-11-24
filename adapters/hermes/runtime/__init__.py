@@ -193,7 +193,7 @@ def _worker_brief_digest(messages):
     return _digest(contexts[0].encode("utf-8")) if len(contexts) == 1 else None
 
 
-def _observe_worker_delivery(ctx, folder, identity, instance, frames):
+def _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, profile_fingerprints):
     pending = {}
 
     def started(parent_session_id=None, child_session_id=None, child_subagent_id=None, **_kwargs):
@@ -201,31 +201,47 @@ def _observe_worker_delivery(ctx, folder, identity, instance, frames):
         if parent_session_id != child_session_id and all(
             isinstance(item, str) and SESSION_ID.fullmatch(item) for item in identifiers
         ):
-            pending.setdefault(child_session_id, (parent_session_id, child_subagent_id))
+            pending.setdefault(child_session_id, {
+                "parentSession": parent_session_id, "workerId": child_subagent_id, "first": True,
+            })
 
     def stopped(child_session_id=None, **_kwargs):
         if isinstance(child_session_id, str):
             pending.pop(child_session_id, None)
 
     def observe(request, next_call, session_id="", **_kwargs):
-        lineage = pending.pop(session_id, None) if isinstance(session_id, str) else None
-        if not lineage:
+        worker = pending.get(session_id) if isinstance(session_id, str) else None
+        if not worker:
             return next_call()
-        parent, worker = lineage
+        first = worker.pop("first", False)
+        if not first and not worker.get("observeProfiles"):
+            return next_call()
         content = _request_content(request)
         messages, system = content or ([], [])
+        core_loaded = _contains_policy(system, frames)
         observation = {
-            "digest": identity, "instance": instance, "mechanism": "first_llm_execution",
-            "parentSession": parent, "childSession": session_id, "workerId": worker,
-            "inspectable": content is not None, "coreLoaded": _contains_policy(system, frames),
-            "briefDigest": _worker_brief_digest(messages),
+            "digest": identity, "instance": instance, "parentSession": worker["parentSession"],
+            "childSession": session_id, "workerId": worker["workerId"],
         }
-        # A failed first call cannot establish delivery or let a later retry attest it.
+        if first:
+            observation.update(mechanism="first_llm_execution", inspectable=content is not None,
+                               coreLoaded=core_loaded, briefDigest=_worker_brief_digest(messages))
+        elif core_loaded:
+            observation.update(mechanism="subsequent_llm_execution", profiles=_profile_reads(messages, profile_skills))
+        # Only a successful provider execution can establish each observation.
         response = next_call()
-        try:
-            _report(folder, f"delegated-{worker}.json", observation, replace=False)
-        except FileExistsError:
-            pass
+        if first:
+            try:
+                _report(folder, f"delegated-{worker['workerId']}.json", observation, replace=False)
+            except FileExistsError:
+                return response
+            # A failed first call cannot let a later retry attest the first request.
+            worker["observeProfiles"] = core_loaded and bool(profile_skills)
+        elif core_loaded:
+            _report(folder, f"delegated-profiles-{worker['workerId']}.json", observation)
+            # Keep the first full observation from a single accepted request, without combining turns.
+            if observation["profiles"] == profile_fingerprints:
+                worker["observeProfiles"] = False
         return response
 
     ctx.register_hook("subagent_start", started)
@@ -290,6 +306,9 @@ def register(ctx):
         ctx.register_skill(name, entrypoint, description=_description(entrypoint))
 
     profile_skills, index = _profile_index(ctx, bundle, manifest)
+    files = {record["path"]: record["digest"] for record in manifest["files"]}
+    profile_fingerprints = [{"id": profile_id, "digest": files[f"profiles/{profile_id}/PROFILE.md"]}
+                            for profile_id in sorted(profile_skills.values())]
     core = (bundle / "core" / "AXIOMS.md").read_text(encoding="utf-8").rstrip("\n")
     parts = [f"Axiom policy digest {manifest['policy']['digest']}", core]
     if index:
@@ -314,5 +333,5 @@ def register(ctx):
     ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, instance, checker_digest))
     ctx.register_middleware("llm_request",
                             _observe_request(folder, identity, instance, frames, observation["sections"], profile_skills))
-    _observe_worker_delivery(ctx, folder, identity, instance, frames)
+    _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, profile_fingerprints)
     _report(folder, "registered.json", observation)
