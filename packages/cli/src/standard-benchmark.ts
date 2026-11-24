@@ -8,7 +8,7 @@ import type { BenchmarkBackend, EvidenceOutcome, HostIdentity, PolicyIdentity, U
 import { createHermesAccountBackend, hermesBundleAdapter, hermesVersion } from "@axiom/hermes-adapter";
 import { defaultCase, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { codexDigest } from "./native-install.js";
-import { claudeClarificationTopic, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
+import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
 import { nativeProgram } from "./native-program.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
 
@@ -102,7 +102,7 @@ async function configureNative(agent: Agent, program: string, authHome: string, 
   if (agent === "claude") {
     const bundle = await buildClaudeBundle({ ...common, repository, destination: scratch });
     return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
-      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome, clarification: claudeClarificationTopic }) };
+      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome, clarification: admittedClaudeClarification(archive.cases) }) };
   }
   if (agent === "codex") {
     const bundle = await buildCodexBundle({ version, source: repository, destination: scratch, catalog, profiles });

@@ -94,7 +94,7 @@ test.runIf(sandbox && program)("runs paired pinned Claude trials through the iso
   const server = await openLoopback("claude", benchmarkModel);
   try {
     const options = { ...defaultBenchmarkLimits, repository, program: program!, allowPaid: true, evidenceDirectory: join(temporary, "evidence") };
-    await expect(runTrustedClaude({ ...options, caseIds: ["resolve-format-decision"] }, baseline, revision, revision,
+    await expect(runTrustedClaude({ ...options, caseIds: ["preserve-delegated-requirements"] }, baseline, revision, revision,
       async () => { throw new Error("Unsupported grading must be rejected before a model call."); }))
       .rejects.toThrow(/cannot independently evaluate/);
     const result = await runTrustedClaude({

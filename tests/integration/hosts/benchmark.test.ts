@@ -7,7 +7,10 @@ import { buildClaudeBundle, claudeCapabilities, createClaudeBackend, executeClau
 import { gradeCase } from "../../../evals/graders/index.js";
 import { loadBundleWorkspace } from "../../../packages/bundles/src/index.js";
 import { reviewNativeBenchmark } from "../../../packages/cli/src/benchmark-review.js";
-import { claudeClarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
+import { defaultBenchmarkLimits, runTrustedClaude } from "../../../packages/cli/src/native-benchmark.js";
+import { benchmarkModel } from "../../../packages/cli/src/provider-budget.js";
+import { benchmarkRevision, prepareReviewedBaseline } from "../../../packages/cli/src/reviewed-baseline.js";
+import { admittedClaudeClarification, claudeClarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
 import { runStandardArchive } from "../../../packages/cli/src/standard-benchmark.js";
 import { runBenchmark } from "../../../packages/benchmark/src/index.js";
 import { EvidenceStore, snapshotSource } from "../../../packages/evidence/src/index.js";
@@ -148,7 +151,7 @@ test.runIf(executable && process.platform === "linux")("grades and replays paire
         sourceRevision: archive.baselineRef, policyVersion: catalog.core.version, selectedProfiles: archive.profiles, checks: catalog.checks, skills,
       });
       return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest, backend: createClaudeBackend({
-        program: executable!, artifacts: archive.evidenceDirectory, bundle, maxBudgetUsd: 0.1, clarification: claudeClarificationTopic,
+        program: executable!, artifacts: archive.evidenceDirectory, bundle, maxBudgetUsd: 0.1, clarification: admittedClaudeClarification(archive.cases),
         environment: { ANTHROPIC_BASE_URL: server.endpoint, ANTHROPIC_AUTH_TOKEN: "loopback-only" },
       }) };
     });
@@ -191,4 +194,55 @@ test("requires a material output choice and a required canonical clarification a
     profiles: [], fixture: "unused", prompt: "unused", principleIds: ["AX-01"],
   } satisfies EvaluationCase;
   expect(supportsClaudeClarification(definition)).toBe(false);
+  const required = { ...definition, assertions: definition.assertions.map((item) => ({ ...item, required: true })) };
+  expect(admittedClaudeClarification([required])(required.id)).toBeTypeOf("function");
+  expect(admittedClaudeClarification([{ ...required, version: "2" }])(required.id)).toBeUndefined();
+  const changedGrader = { ...required, assertions: [{ ...required.assertions[0]!, grader: "trace.context-discovery" }] };
+  expect(admittedClaudeClarification([changedGrader])(required.id)).toBeUndefined();
 });
+
+
+test.runIf(executable && process.platform === "linux" && process.env.AXIOM_TEST_BWRAP === "1")(
+  "grades clarification through the bounded native sandbox while preserving the preview surface", async () => {
+    const repository = process.cwd();
+    const revision = await benchmarkRevision(repository);
+    const root = await mkdtemp(join(tmpdir(), "axiom-claude-strict-clarification-"));
+    const baseline = await prepareReviewedBaseline(repository, root, revision, { baselineRef: revision });
+    const toolSurfaces: string[][] = [];
+    const server = await openLoopback("claude", benchmarkModel, ({ text, toolResults }) => {
+      if (text.includes("Record the disposition of the required browser preview")) return;
+      if (toolResults.length === 0) return { name: "Read", arguments: '{"file_path":"issue.txt"}' };
+      if (toolResults.length === 1) return { name: "AskUserQuestion", arguments: JSON.stringify({
+        questions: [{ question: "Which report format should I implement?", header: "Export", multiSelect: false,
+          options: [{ label: "CSV", description: "Delimited" }, { label: "JSON", description: "Array" }] }],
+      }) };
+    });
+    try {
+      const result = await runTrustedClaude({ ...defaultBenchmarkLimits, repository, program: executable!, allowPaid: true,
+        evidenceDirectory: join(root, "evidence"), caseIds: ["resolve-format-decision", "report-unavailable-preview"],
+      }, baseline, revision, revision, (body, signal) => {
+        const tools = body.tools as { name: string }[];
+        toolSurfaces.push(tools.map(({ name }) => name));
+        expect(Number(body.max_tokens)).toBeLessThanOrEqual(defaultBenchmarkLimits.maxOutputTokens);
+        return fetch(server.endpoint + "/v1/messages", { method: "POST", body: JSON.stringify(body), signal });
+      });
+      expect(result).toMatchObject({ mode: "strict", provider: "injected", metering: { inputTokens: 72, outputTokens: 24 } });
+      expect(result.report.attempts.map(({ execution, outcome }) => [execution?.outcome.status, outcome.status])).toEqual([
+        ["passed", "passed"], ["passed", "passed"], ["passed", "failed"], ["passed", "failed"],
+      ]);
+      expect(toolSurfaces).toHaveLength(8);
+      expect(toolSurfaces.map((tools) => tools.includes("AskUserQuestion"))).toEqual([
+        true, true, true, true, true, true, false, false,
+      ]);
+      for (const attempt of result.report.attempts.slice(2)) {
+        expect(attempt.assertions[0]?.outcome).toMatchObject({ status: "failed", reason: expect.stringMatching(/verification record.*missing/i) });
+      }
+      expect(await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest)).toMatchObject({
+        outcome: { status: "passed" }, report: { mode: "strict", provider: "injected", benchmarkOutcome: { status: "failed" } },
+      });
+    } finally {
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000,
+);

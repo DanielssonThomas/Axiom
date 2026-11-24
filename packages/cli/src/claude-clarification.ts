@@ -31,6 +31,11 @@ export function claudeClarificationTopic(caseId: string) {
   };
 }
 
+export function admittedClaudeClarification(cases: readonly EvaluationCase[]) {
+  const admitted = new Set(cases.filter(supportsClaudeClarification).map(({ id }) => id));
+  return (caseId: string) => admitted.has(caseId) ? claudeClarificationTopic(caseId) : undefined;
+}
+
 export async function readClaudeClarification(store: EvidenceStore, execution: BackendResult, workspace: string,
   evaluation: EvaluationCase): Promise<GradingAction[] | undefined> {
   if (!supportsClaudeClarification(evaluation)) return;

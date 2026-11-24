@@ -111,7 +111,7 @@ export async function prepareBenchmarkArchive(options: ArchiveOptions, baseline:
   checkPath?.(evidenceParent);
   const evidenceDirectory = await mkdtemp(join(evidenceParent, "benchmark-"));
   return { repository, evidenceDirectory, store: new EvidenceStore(evidenceDirectory), options, baseline, baselineRef, revision,
-    grader, catalog, caseIds, profiles };
+    grader, catalog, cases, caseIds, profiles };
 }
 
 type PreparedArchive = Awaited<ReturnType<typeof prepareBenchmarkArchive>>;

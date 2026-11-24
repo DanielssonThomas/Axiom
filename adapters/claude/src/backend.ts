@@ -37,6 +37,8 @@ export interface ClaudeSessionOptions {
   bundle?: ClaudeBundle;
   tools?: readonly string[];
   clarification?: ClarificationTopic;
+  /** The isolated launcher uses configuration staged in its disposable profile. */
+  useDisposableSettings?: boolean;
 }
 
 function behind(root: string, path: string): boolean {
@@ -59,7 +61,7 @@ export async function executeClaudeSession(profile: ClaudeProfile, options: Clau
   const enabledTools = tools && (exchange ? [...new Set([...tools, "AskUserQuestion"])] : tools);
   const allowedTools = tools?.filter((tool) => !exchange || tool !== "AskUserQuestion");
   const { code, stdout } = await invokeClaude(profile, [
-    ...(options.subscription ? subscriptionArguments : exchange ? ["--restricted"] : []),
+    ...(options.subscription ? subscriptionArguments : exchange && !(options.useDisposableSettings && profile.launch) ? ["--restricted"] : []),
     "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
     ...(exchange ? ["--input-format", "stream-json", "--permission-prompt-tool", "stdio"] : []),
     "--permission-mode", exchange ? "default" : "dontAsk", "--no-session-persistence",
@@ -143,7 +145,7 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
         ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
         ...(bundle && !options.installNative ? { bundle } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
-        ...(clarification ? { clarification } : {}),
+        ...(clarification ? { clarification, useDisposableSettings: !!(options.launch && options.installNative) } : {}),
       });
       usage = subscription && trace.usage.metering === "reported"
         ? { metering: "reported", inputTokens: trace.usage.inputTokens, outputTokens: trace.usage.outputTokens } : trace.usage;

@@ -14,6 +14,7 @@ import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, write
 
 import { prepareBenchmarkArchive, runArchivedBenchmark, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { nativeProgram } from "./native-program.js";
+import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
 
 const exec = promisify(execFile);
 const blocked = (reason: string): EvidenceOutcome => ({ status: "blocked", reason });
@@ -85,9 +86,9 @@ export async function runTrustedClaude(
   if (!options.allowPaid || (options.model ?? benchmarkModel) !== benchmarkModel || process.platform !== "linux" ||
       !isSupportedBenchmarkBudget(options)) throw new Error("The isolated benchmark scope requires explicit authorized limits.");
   const archive = await prepareBenchmarkArchive(options, baseline, revision, baselineRef, (item) =>
-    item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
+    supportsClaudeClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
       (isUnavailablePreview(item) && grader === unavailablePreviewCase.grader)) &&
-    item.requiredCapabilities.every((id) => id === "action-trace"), assertPrivateBenchmarkPath);
+    item.requiredCapabilities.every((id) => id === "action-trace")), assertPrivateBenchmarkPath);
   const { repository, evidenceDirectory, store, profiles } = archive;
   const temporary = await mkdtemp("/tmp/axiom-live-");
   const deadline = AbortSignal.timeout(options.timeoutSeconds * 1000);
@@ -104,7 +105,7 @@ export async function runTrustedClaude(
       options.maxOutputTokens, upstream, cancellation);
     const backend = createClaudeBackend({
       program, artifacts: evidenceDirectory, bundle, installNative: true,
-      tools: [...benchmarkTools],
+      tools: [...benchmarkTools], clarification: admittedClaudeClarification(archive.cases),
       environment: { ANTHROPIC_API_KEY: "axiom-loopback" },
       launch: launchClaudeSandbox(provider.socketPath, bundle.directory),
       // Broker limits are authoritative. Claude's internal budget is a secondary estimated stop.
@@ -129,9 +130,13 @@ export async function runTrustedClaude(
           return { ...result, usage: measuredAttempt(before, provider.usage()) };
         } },
         async actions(evaluation, value) {
-          const trace = value.execution.artifacts.find(({ kind }) => kind === "action-trace");
-          const id = value.execution.requestId;
-          const actions = await observedActions(store, trace?.location, workspaces.get(id)!);
+          const { execution } = value;
+          const id = execution.requestId;
+          const workspace = workspaces.get(id);
+          if (workspace === undefined) return;
+          if (supportsClaudeClarification(evaluation)) return readClaudeClarification(store, execution, workspace, evaluation);
+          const trace = execution.artifacts.find(({ kind }) => kind === "action-trace");
+          const actions = await observedActions(store, trace?.location, workspace);
           if (actions && isUnavailablePreview(evaluation) && observedLocalToolSurface.has(id)) {
             // The sandbox provides loopback only to the broker and starts no browser preview.
             // The broker independently observed the launch's file/skill-only provider surface.
