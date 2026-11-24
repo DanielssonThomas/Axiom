@@ -12,20 +12,43 @@ interface FixtureFile {
 
 type FixtureFiles = ReadonlyMap<string, FixtureFile>;
 
+const fixtureShapeReasons = {
+  root: "The delivered fixture root must be an ordinary directory.",
+  git: "The delivered fixture contains Git metadata.",
+  path: "The delivered fixture contains a nonportable path.",
+  link: "The delivered fixture contains a symbolic link or multiply linked file.",
+  entry: "The delivered fixture contains an unsupported filesystem entry.",
+};
+
+class FixtureShapeError extends Error {
+  constructor(kind: keyof typeof fixtureShapeReasons) {
+    super(fixtureShapeReasons[kind]);
+  }
+}
+
+/** Retain only fixed diagnostics from delivered-fixture capture. */
+export function fixtureCaptureReason(error: unknown): string {
+  if (error instanceof FixtureShapeError) return error.message;
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "ENOENT" || code === "ENOTDIR") return "The delivered fixture was missing or changed during capture.";
+  if (code === "EACCES" || code === "EPERM") return "Access to the delivered fixture was denied during capture.";
+  return "The delivered fixture could not be captured for independent grading.";
+}
+
 function pathParts(path: string): string[] {
   const parts = path.split("/");
   if (parts.some((part) => !part || part === "." || part === ".." || /[:\\\0]/.test(part))) {
-    throw new Error("Fixture paths must use repository-relative segments.");
+    throw new FixtureShapeError("path");
   }
   return parts;
 }
 
 export async function readFixture(root: string): Promise<FixtureFiles> {
-  if (!(await lstat(root)).isDirectory()) throw new Error("The fixture root must be a regular directory.");
+  if (!(await lstat(root)).isDirectory()) throw new FixtureShapeError("root");
   const files = new Map<string, FixtureFile>();
   async function readDirectory(directory: string, parent = ""): Promise<void> {
     for (const name of (await readdir(directory)).sort()) {
-      if (name === ".git") throw new Error("Fixture files cannot carry Git metadata.");
+      if (name === ".git") throw new FixtureShapeError("git");
       const relative = parent + name;
       pathParts(relative);
       const source = join(directory, name);
@@ -34,9 +57,9 @@ export async function readFixture(root: string): Promise<FixtureFiles> {
         await readDirectory(source, `${relative}/`);
       } else if (info.isFile() && info.nlink === 1) {
         files.set(relative, { bytes: await readFile(source), mode: 0o600 | (info.mode & 0o100) });
-      } else {
-        throw new Error("Fixture entries must be ordinary files and directories.");
-      }
+      } else if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) {
+        throw new FixtureShapeError("link");
+      } else throw new FixtureShapeError("entry");
     }
   }
   await readDirectory(root);

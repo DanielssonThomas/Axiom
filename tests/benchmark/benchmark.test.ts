@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
@@ -179,6 +179,50 @@ test("blocks absent isolation and rejects a private fixture or a symlink before 
   const absent = await runBenchmark(noProvider);
   expect(absent.outcome.status).toBe("blocked");
   expect(absent.attempts[0]?.outcome.reason).toMatch(/isolation/i);
+});
+
+test.each([
+  ["Git metadata", "The delivered fixture contains Git metadata."],
+  ["symbolic link", "The delivered fixture contains a symbolic link or multiply linked file."],
+  ["shared link", "The delivered fixture contains a symbolic link or multiply linked file."],
+  ["missing workspace", "The delivered fixture was missing or changed during capture."],
+  ["verifier staging", "The captured fixture could not be prepared for independent source verification."],
+] as const)("classifies %s safely after native execution completed", async (scenario, reason) => {
+  const canary = "private-capture-path-and-content-canary";
+  const graded: string[] = [];
+  const report = await runBenchmark(options({
+    limits: { timeoutMs: 8000, maxConcurrency: 1, maxAttempts: 2 },
+    openRuntime: async (workspace) => ({
+      ...await fake(workspace), kind: "native",
+      backend: { async run(request) {
+        if (request.mode === "without_axiom") {
+          const file = join(workspace, canary);
+          if (scenario === "Git metadata") await mkdir(join(file, ".git"), { recursive: true });
+          if (scenario === "symbolic link") await symlink(join(root, "evals", "graders", "hidden.txt"), file, "file");
+          if (scenario === "shared link") await link(join(workspace, "visible.txt"), file);
+          if (scenario === "missing workspace") await rm(workspace, { recursive: true, force: true });
+          if (scenario === "verifier staging") await writeFile(join(workspace, "..", "verified-source"), canary);
+        }
+        return execution(request);
+      } },
+    }),
+    grader: { ...graderIdentity, grade: (evaluation, observation) => {
+      graded.push(observation.execution.requestId);
+      return { source: observation.source,
+        assertions: evaluation.assertions.map(({ id }) => ({ criterionId: id, outcome: { status: "passed" } })) };
+    } },
+  }));
+  const [passed, blocked] = report.attempts;
+  expect(passed?.outcome.status).toBe("passed");
+  expect(blocked).toMatchObject({ mode: "without_axiom", execution: { outcome: { status: "passed" } },
+    outcome: { status: "blocked", reason },
+    assertions: [{ outcome: { status: "not_run" } }, { outcome: { status: "not_run" } }],
+  });
+  expect(blocked?.source).toBeUndefined();
+  expect(blocked?.assertions.some(({ evidenceId }) => evidenceId !== undefined)).toBe(false);
+  expect(report.outcome.status).toBe("blocked");
+  expect(graded).toEqual([passed?.id]);
+  expect(JSON.stringify(report)).not.toContain(canary);
 });
 
 test("keeps attempted behavior failures and blocked capabilities visible", async () => {

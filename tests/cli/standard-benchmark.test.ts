@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -70,6 +70,44 @@ test("records positive standard behavior separately from hard-budget and qualifi
     ] } } });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("replays the graded arm when a completed native arm could not be captured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-standard-capture-"));
+  const privateMarker = "private-delivered-artifact-canary";
+  try {
+    const codex = { ...host, agent: "codex", version: "0.172.0-alpha.2" };
+    const digest = `sha256:${"c".repeat(64)}`;
+    const result = await runStandardArchive({
+      repository, evidenceDirectory: root, allowNative: true, timeoutSeconds: 15, repetitions: 1,
+    }, codex, "injected", async () => ({
+      policy: { version: "1", digest, profiles: [] }, bundleDigest: digest,
+      backend: { async run(request) {
+        if (request.mode === "with_axiom") await writeFile(join(request.workspace, "command.mjs"), patchedCommand);
+        else await writeFile(join(request.workspace, ".git"), privateMarker);
+        return { requestId: request.id, host: codex, outcome: { status: "passed" }, durationMs: 2, artifacts: [],
+          usage: { metering: "reported", inputTokens: 1, outputTokens: 1 } };
+      } },
+    }));
+    expect(result.outcome.status).toBe("blocked");
+    if (!("report" in result) || !result.report) throw new Error("Expected the standard benchmark archive.");
+    const { evidenceDirectory, evidenceDigest, observations, report } = result.report;
+    const [graded, uncaptured] = report.attempts;
+    expect(graded?.outcome.status).toBe("passed");
+    expect(uncaptured).toMatchObject({ mode: "without_axiom", execution: { outcome: { status: "passed" } },
+      outcome: { status: "blocked", reason: "The delivered fixture contains Git metadata." },
+      assertions: [{ outcome: { status: "not_run" } }, { outcome: { status: "not_run" } }],
+    });
+    expect(Object.keys(observations)).toEqual([graded?.id]);
+    expect((await readdir(evidenceDirectory)).sort()).toEqual(["acceptance", "benchmark.json", `${graded!.id}.grading.json`].sort());
+    expect(await readFile(join(evidenceDirectory, "benchmark.json"), "utf8")).not.toContain(privateMarker);
+    const replay = await reviewNativeBenchmark(repository, evidenceDirectory, evidenceDigest);
+    expect(replay).toMatchObject({ outcome: { status: "blocked" }, report: { qualification: { status: "blocked" }, reviews: [
+      { id: graded?.id, assertions: [expect.objectContaining({ outcome: { status: "passed" } }),
+        expect.objectContaining({ outcome: { status: "passed" } })] },
+      { id: uncaptured?.id, outcome: { status: "not_run" } },
+    ] } });
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 20_000);
 
 test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mode uses standalone profiles, guards paths and replays paired native edits", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-hermes-account-"));

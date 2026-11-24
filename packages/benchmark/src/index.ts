@@ -8,7 +8,7 @@ import {
   evaluationCaseSchema, hostIdentitySchema, policyIdentitySchema, runLimitsSchema,
 } from "@axiom/contracts";
 import type { EvaluationCase, EvidenceOutcome } from "@axiom/contracts";
-import { evidenceSource, fixtureText, loadFixture, readFixture, stageFixture } from "./fixtures.js";
+import { evidenceSource, fixtureCaptureReason, fixtureText, loadFixture, readFixture, stageFixture } from "./fixtures.js";
 import { gradeAttempt, trustedArtifacts } from "./grade.js";
 import { abortable, closeRuntime } from "./lifecycle.js";
 import { blocked, notRun } from "./model.js";
@@ -127,9 +127,12 @@ async function executeAttempt(
         ? blocked("The backend cannot waive an execution required by the run.") : execution.outcome);
     }
 
-    phase = "The delivered fixture could not be captured for independent grading.";
     signal.throwIfAborted();
-    const after = await readFixture(workspace);
+    const after = await readFixture(workspace).catch((error: unknown) => {
+      phase = fixtureCaptureReason(error);
+      throw error;
+    });
+    phase = "The captured fixture could not be prepared for independent source verification.";
     const scope = await evidenceSource(join(scratch, "verified-source"), after);
     phase = "Independent grading or evidence verification did not complete.";
     await gradeAttempt(evaluation, attempt, {
