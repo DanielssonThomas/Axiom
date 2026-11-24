@@ -29,13 +29,16 @@ function send(response: ServerResponse, { protocol, model, requestNumber, tool }
     (event ? `event: ${event}\n` : "") + `data: ${JSON.stringify(data)}\n\n`,
   );
   if (protocol === "claude") {
+    const content = tool ? { type: "tool_use", id: `toolu_fixture_${requestNumber}`, name: tool.name, input: {} }
+      : { type: "text", text: "" };
+    const delta = tool ? { type: "input_json_delta", partial_json: tool.arguments } : { type: "text_delta", text };
     const events = [
       { type: "message_start", message: { id: "msg_fixture", type: "message", role: "assistant", content: [],
         model, stop_reason: null, stop_sequence: null, usage: { input_tokens: 9, output_tokens: 0 } } },
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+      { type: "content_block_start", index: 0, content_block: content },
+      { type: "content_block_delta", index: 0, delta },
       { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } },
+      { type: "message_delta", delta: { stop_reason: tool ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } },
       { type: "message_stop" },
     ];
     for (const event of events) frame(event, event.type);
@@ -72,7 +75,7 @@ function strings(value: unknown): string[] {
 
 /** Used only for transport evidence. The synthetic responses make no decisions about Axiom policy. */
 export async function openLoopback(protocol: NativeHost, model: string,
-  hermesScript?: (observation: RequestObservation) => FixtureTool | undefined) {
+  script?: (observation: RequestObservation) => FixtureTool | undefined) {
   const requests: RequestObservation[] = [];
   let nextHermesTool: (() => Promise<FixtureTool>) | undefined;
   const server = createServer(async (request, response) => {
@@ -93,13 +96,16 @@ export async function openLoopback(protocol: NativeHost, model: string,
       if (typeof requestedModel !== "string") throw new Error("The native fixture request did not include a model.");
       const messages = body && typeof body === "object" && "messages" in body ? body.messages : undefined;
       const toolResults = Array.isArray(messages) ? messages.flatMap((message) =>
-        message?.role === "tool" && typeof message.content === "string" ? [message.content] : [],
+        message?.role === "tool" && typeof message.content === "string" ? [message.content]
+          : protocol === "claude" && message?.role === "user" && Array.isArray(message.content)
+            ? message.content.filter((part: { type?: string }) => part?.type === "tool_result").map((part: unknown) => strings(part).join("\n"))
+            : [],
       ) : [];
       const observation = { model: requestedModel, text: strings(body).join("\n"), toolResults };
       requests.push(observation);
       const tool = nextHermesTool;
       nextHermesTool = undefined;
-      const call = tool ? await tool() : hermesScript?.(observation);
+      const call = tool ? await tool() : script?.(observation);
       send(response, { protocol, model, requestNumber: requests.length, ...(call && { tool: call }) });
     } catch {
       response.writeHead(400).end();

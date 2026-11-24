@@ -8,6 +8,7 @@ import type { BenchmarkBackend, EvidenceOutcome, HostIdentity, PolicyIdentity, U
 import { createHermesAccountBackend, hermesBundleAdapter, hermesVersion } from "@axiom/hermes-adapter";
 import { defaultCase, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { codexDigest } from "./native-install.js";
+import { claudeClarificationTopic, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
 import { nativeProgram } from "./native-program.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
 
@@ -56,14 +57,27 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
     const baselineRef = options.baselineRef ?? revision;
     if (!isCommit(baselineRef)) return blocked("Use the full reviewed baseline commit SHA.");
     baseline = await prepareReviewedBaseline(repository, tmpdir(), revision, { baselineRef });
+    const claude = host.agent === "claude";
     const archive = await prepareBenchmarkArchive(options, baseline, revision, baselineRef, (item) =>
-      item.id === defaultCase && item.requiredCapabilities.length === 0);
+      (item.id === defaultCase && item.requiredCapabilities.length === 0) || (claude && supportsClaudeClarification(item)));
     await writeReviewedLicense(repository, baseline, baselineRef);
     scratch = await mkdtemp(join(tmpdir(), "axiom-native-account-"));
     cancellation.throwIfAborted();
     const plan = await configure(archive, scratch);
+    const workspaces = new Map<string, string>();
     const result = await runArchivedBenchmark(archive, {
       ...plan, host, signal: cancellation,
+      ...(claude ? {
+        capabilities: [{ id: "action-trace", available: true }] as const,
+        backend: { run(request, abort) {
+          workspaces.set(request.id, request.workspace);
+          return plan.backend.run(request, abort);
+        } },
+        async actions(evaluation, { execution }) {
+          const workspace = workspaces.get(execution.requestId);
+          return workspace === undefined ? undefined : readClaudeClarification(archive.store, execution, workspace, evaluation);
+        },
+      } : {}),
       control: { mode: "standard", provider, hardBudgetEnforcement: "unavailable", qualification: standardQualification },
       metering: () => unknownUsage,
       assess: (report) => report.outcome,
@@ -88,7 +102,7 @@ async function configureNative(agent: Agent, program: string, authHome: string, 
   if (agent === "claude") {
     const bundle = await buildClaudeBundle({ ...common, repository, destination: scratch });
     return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
-      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome }) };
+      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome, clarification: claudeClarificationTopic }) };
   }
   if (agent === "codex") {
     const bundle = await buildCodexBundle({ version, source: repository, destination: scratch, catalog, profiles });

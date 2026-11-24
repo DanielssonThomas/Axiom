@@ -9,6 +9,7 @@ import { configureClaudeProfile } from "./profile.js";
 import { sha256, workerBriefKey } from "./runtime.js";
 import { assessClaudeActivation, parseClaudeTrace, supportedClaudeHost } from "./trace.js";
 import type { ClaudeBundle } from "./bundle.js";
+import { clarificationExchange, type ClarificationTopic } from "./clarification.js";
 
 export interface ClaudeBackendOptions {
   program: string;
@@ -24,6 +25,7 @@ export interface ClaudeBackendOptions {
   launch?: ClaudeLauncher;
   installNative?: boolean;
   tools?: readonly string[];
+  clarification?: (caseId: string) => ClarificationTopic | undefined;
 }
 
 export interface ClaudeSessionOptions {
@@ -34,6 +36,7 @@ export interface ClaudeSessionOptions {
   signal?: AbortSignal;
   bundle?: ClaudeBundle;
   tools?: readonly string[];
+  clarification?: ClarificationTopic;
 }
 
 function behind(root: string, path: string): boolean {
@@ -51,19 +54,24 @@ function budgetArguments(budget: number | undefined, subscription: boolean): str
 
 /** Run one native print session and normalize CLI observations without storing transcript text. */
 export async function executeClaudeSession(profile: ClaudeProfile, options: ClaudeSessionOptions) {
-  const tools = options.subscription ? subscriptionTools : options.tools;
+  const exchange = options.clarification && clarificationExchange(options.clarification);
+  const tools = options.subscription ? subscriptionTools : options.tools ?? (exchange ? subscriptionTools : undefined);
+  const enabledTools = tools && (exchange ? [...new Set([...tools, "AskUserQuestion"])] : tools);
+  const allowedTools = tools?.filter((tool) => !exchange || tool !== "AskUserQuestion");
   const { code, stdout } = await invokeClaude(profile, [
-    ...(options.subscription ? subscriptionArguments : []),
+    ...(options.subscription ? subscriptionArguments : exchange ? ["--restricted"] : []),
     "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
-    "--permission-mode", "dontAsk", "--no-session-persistence", ...budgetArguments(options.maxBudgetUsd, !!options.subscription),
+    ...(exchange ? ["--input-format", "stream-json", "--permission-prompt-tool", "stdio"] : []),
+    "--permission-mode", exchange ? "default" : "dontAsk", "--no-session-persistence",
+    ...budgetArguments(options.maxBudgetUsd, !!options.subscription),
     "--model", options.model,
-    ...(tools ? ["--tools", tools.join(","), "--allowedTools", tools.join(","),
+    ...(enabledTools ? ["--tools", enabledTools.join(","), ...(allowedTools?.length ? ["--allowedTools", allowedTools.join(",")] : []),
       "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'] : []),
     ...(options.bundle ? ["--plugin-dir", options.bundle.plugin] : []),
-  ], options.signal, options.prompt);
+  ], options.signal, exchange ? { prompt: options.prompt, respond: exchange.respond } : options.prompt);
   const hidden = Object.entries(profile.environment ?? {})
     .filter(([key]) => /(?:token|key|secret|pass|auth|worker.brief)/i.test(key)).map(([, value]) => value);
-  return { code, ...parseClaudeTrace(stdout, hidden, profile.environment?.[workerBriefKey]) };
+  return { code, ...parseClaudeTrace(stdout, hidden, profile.environment?.[workerBriefKey], exchange?.questions) };
 }
 
 export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBackend {
@@ -129,11 +137,13 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
         return result({ status: "blocked", reason: "Sign in to the selected Claude Code profile with a native claude.ai subscription." });
       }
       if (bundle && options.installNative) await configureClaudeProfile(profile, "user", "install", bundle, signal);
+      const clarification = options.clarification?.(request.caseId);
       const trace = await executeClaudeSession(profile, {
         model: request.host.model, prompt: request.prompt, signal, subscription,
         ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
         ...(bundle && !options.installNative ? { bundle } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
+        ...(clarification ? { clarification } : {}),
       });
       usage = subscription && trace.usage.metering === "reported"
         ? { metering: "reported", inputTokens: trace.usage.inputTokens, outputTokens: trace.usage.outputTokens } : trace.usage;
