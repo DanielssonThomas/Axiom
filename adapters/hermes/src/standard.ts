@@ -33,6 +33,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       return blocked("Select the Hermes default auth root with an existing OpenAI Codex login.");
     }
     const profile = "axiom-bench-" + randomUUID().slice(0, 12);
+    const selectedProvider = options.loopback ? "custom" : provider;
     const remaining = () => Math.max(0, request.timeoutMs - (performance.now() - started));
     const env = { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, HERMES_DISABLE_AUTO_UPDATE: "1",
       HERMES_TUI_GATEWAY_URL: "", HERMES_WRITE_SAFE_ROOT: request.workspace,
@@ -53,6 +54,8 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       if (created.code !== 0 || !directory) return blocked("The disposable Hermes profile could not be created.");
       await writeFile(join(directory, "config.yaml"), JSON.stringify({
         _config_version: 54, gateway: { standalone: true }, hooks_auto_accept: true,
+        // The native launch guard checks the named profile's configuration before resolving the default OAuth login.
+        model: { provider: selectedProvider, default: request.host.model },
         hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace].map((part) => JSON.stringify(part)).join(" "),
           timeout: 5, fail_closed: true }] },
       }), { mode: 0o600 });
@@ -66,7 +69,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       if (signal.aborted || remaining() < 1) return blocked("Hermes account execution was cancelled or exhausted its time limit.");
       const backend = new HermesBenchmarkBackend({
         executable: options.executable, profile: { home, profile }, archiveDirectory: options.archiveDirectory,
-        provider: options.loopback ? "custom" : provider, maxTurns: 8, standalone: true, toolsets: ["file", "skills"], environment: env,
+        provider: selectedProvider, maxTurns: 8, standalone: true, toolsets: ["file", "skills"], environment: env,
         ...(options.loopback && { baseUrl: options.loopback }),
       });
       return await backend.run({ ...request, timeoutMs: Math.floor(remaining()) }, signal);

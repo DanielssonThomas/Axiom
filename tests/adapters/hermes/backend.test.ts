@@ -10,7 +10,7 @@ afterEach(() => {
   for (const path of workspaces.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-function fixture(tool = "read_file") {
+function fixture(tool = "read_file", stream?: { events: unknown[]; processCode: number }) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "axiom-hermes-backend-")));
   workspaces.push(directory);
   const home = join(directory, "hermes-home");
@@ -46,12 +46,13 @@ if (prompt !== 'A literal $(not shell) task.' || !argv.includes("--format") || !
   || !argv.includes("--max-turns") || !argv.includes("2") || argv.includes("--run-budget")
   || !argv.includes("--query-file") || !argv.includes("--profile") || !argv.includes("eval")
   || process.env.HERMES_HOME !== ${JSON.stringify(home)}) process.exit(8);
-for (const event of [
-  {type:"system",subtype:"init",model:"fixture-model"},
-  {type:"tool_use",name:${JSON.stringify(tool)},tool_call_id:"call-1",input:{secret:"not archived"}},
-  {type:"tool_result",name:${JSON.stringify(tool)},tool_call_id:"call-1",is_error:false,duration_ms:3},
-  {type:"result",session_id:"session-one",exit_code:0,tokens:{input:4,output:1,total:5}}
-]) console.log(JSON.stringify(event));
+for (const event of ${JSON.stringify(stream?.events ?? [
+    { type: "system", subtype: "init", model: "fixture-model" },
+    { type: "tool_use", name: tool, tool_call_id: "call-1", input: { secret: "not archived" } },
+    { type: "tool_result", name: tool, tool_call_id: "call-1", is_error: false, duration_ms: 3 },
+    { type: "result", session_id: "session-one", exit_code: 0, tokens: { input: 4, output: 1, total: 5 } },
+  ])}) console.log(JSON.stringify(event));
+process.exitCode = ${stream?.processCode ?? 0};
 `);
   const archive = join(directory, "archive");
   const options = {
@@ -86,6 +87,30 @@ test("runs documented Hermes flags with literal stdin and archives normalized na
   expect(raw).toContain("read_file");
   expect(raw).not.toContain("not archived");
   expect(raw).not.toContain("A literal");
+});
+
+const genericStreamFailure = "The Hermes stream lacked a matching native model and terminal result.";
+const initFailure = "credentials or agent init failed";
+const privateError = "private-native-startup-detail";
+const init = { type: "system", subtype: "init", model: "fixture-model" };
+const presession = { type: "result", session_id: "", exit_code: 1, error: initFailure };
+test.each([
+  { name: "credential or agent initialization", events: [init, presession], processCode: 1,
+    reason: "Hermes reported a credential or agent initialization failure before establishing a session." },
+  { name: "another pre-session failure", events: [init, { ...presession, error: privateError }], processCode: 1,
+    reason: "The native Hermes run failed before establishing a session." },
+  { name: "zero exit without a session", events: [init, { ...presession, exit_code: 0 }], processCode: 0,
+    reason: genericStreamFailure },
+  { name: "inconsistent process exit", events: [init, presession], processCode: 2, reason: genericStreamFailure },
+  { name: "another model", events: [{ ...init, model: "other-model" }, presession], processCode: 1, reason: genericStreamFailure },
+  { name: "a result followed by an event", events: [init, presession, init], processCode: 1, reason: genericStreamFailure },
+])("blocks $name without archiving the raw Hermes stream", async ({ events, processCode, reason }) => {
+  const { backend, request } = fixture("read_file", { events, processCode });
+  const actual = await backend.run(request, new AbortController().signal);
+  expect(actual.outcome).toEqual({ status: "blocked", reason });
+  expect(actual.artifacts).toEqual([]);
+  expect(actual.host).toBeUndefined();
+  expect(JSON.stringify(actual)).not.toContain(privateError);
 });
 
 test("blocks archive and profile overlaps before launching Hermes", async () => {

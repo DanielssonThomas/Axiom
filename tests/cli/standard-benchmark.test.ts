@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -108,6 +108,44 @@ test("replays the graded arm when a completed native arm could not be captured",
     ] } });
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 20_000);
+
+test.runIf(Boolean(program) && process.platform === "linux")("starts the pinned Hermes Codex route using a default-profile login", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-hermes-codex-native-"));
+  const authHome = join(root, "auth");
+  const workspace = join(root, "workspace");
+  const archiveDirectory = join(root, "archive");
+  const launcher = join(root, "hermes-loopback");
+  const model = "gpt-6.2-sol";
+  const scratchBearer = "synthetic-default-profile-access-token";
+  const credentials = JSON.stringify({ version: 1, credential_pool: {
+    "openai-codex": [{ id: "fixture", label: "Fixture login", auth_type: "oauth", priority: 0, source: "manual:device_code",
+      access_token: scratchBearer, refresh_token: "synthetic-default-profile-refresh-token" }],
+  } });
+  const server = await openLoopback("codex", model);
+  const shellLiteral = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  try {
+    await Promise.all([mkdir(authHome), mkdir(workspace)]);
+    await writeFile(join(authHome, "auth.json"), credentials, { mode: 0o600 });
+    // Substitute only the provider URL in this local launcher. Keep Hermes's real Codex transport and auth checks.
+    await writeFile(launcher, ["#!/bin/sh", `export HERMES_CODEX_BASE_URL=${shellLiteral(server.endpoint + "/backend-api/codex")}`,
+      `exec ${shellLiteral(await realpath(program!))} "$@"`, ""].join("\n"), { mode: 0o700 });
+    const backend = createHermesAccountBackend({ executable: launcher, authHome, archiveDirectory, bundle: join(root, "unused-bundle") });
+    const result = await backend.run({ id: "codex-route", caseId: "fixture", prompt: "Acknowledge the disposable transport fixture.",
+      workspace, timeoutMs: 45_000, mode: "without_axiom", host: { ...host, model },
+      policy: { version: "1", digest: `sha256:${"0".repeat(64)}`, profiles: [] },
+    }, new AbortController().signal);
+    expect(result.outcome).toEqual({ status: "passed" });
+    expect(server.requests.map((request) => request.model)).toEqual([model]);
+    expect(result.artifacts).toEqual([expect.objectContaining({ kind: "hermes-trace" })]);
+    const trace = await readFile(join(archiveDirectory, result.artifacts[0]!.location), "utf8");
+    expect(JSON.parse(trace)).toMatchObject({ model, session: expect.any(String), exitCode: 0 });
+    expect(trace).not.toContain(scratchBearer);
+    expect(await readFile(join(authHome, "auth.json"), "utf8")).toBe(credentials);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 55_000);
 
 test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mode uses standalone profiles, guards paths and replays paired native edits", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-hermes-account-"));

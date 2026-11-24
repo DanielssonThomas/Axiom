@@ -112,7 +112,7 @@ node packages/cli/dist/index.js benchmark claude --mode standard --allow-native
 | Host | Native account route |
 | --- | --- |
 | Codex 0.172.0-alpha.2 | Use an existing ChatGPT login in Codex's file credential store. The runner lets Codex share and refresh the native login through a link in a disposable home. Its named tool sandbox guards that store and the evidence archive. If the current login exists only in an OS keyring, use a dedicated native benchmark home. |
-| Hermes 0.23.3 | Use `hermes --profile default auth status openai-codex`. The runner creates a temporary named standalone profile for each attempt, reuses the default profile's OpenAI Codex OAuth through Hermes' native fallback, and removes its own profile after use. The foreground gateway belongs to that temporary profile. To sign in first, use `hermes --profile default auth add openai-codex --browser`. |
+| Hermes 0.23.3 | Use `hermes --profile default auth status openai-codex`. The runner creates a temporary named standalone profile with the `openai-codex` provider and requested model for each attempt. Hermes uses its native fallback to the default profile's OpenAI Codex OAuth. The foreground gateway belongs to that temporary profile, which the runner removes after use. To sign in first, use `hermes --profile default auth add openai-codex --browser`. |
 | Claude Code 2.1.330 | Use an existing first-party Claude subscription login visible to `claude auth status`. The runner uses restricted file and skill tools with the native session-only plugin in the Axiom arm. |
 
 For a dedicated Codex login, use the ordinary device login once, then keep using that home.
@@ -123,9 +123,11 @@ CODEX_HOME="$HOME/.codex-axiom" codex -c 'cli_auth_credentials_store="file"' log
 node packages/cli/dist/index.js benchmark codex --mode standard --allow-native --auth-home "$HOME/.codex-axiom"
 ```
 
-The default runs two serial attempts of `reuse-summary-formatter`, with and without Axiom. The time limit defaults to 120 seconds. Use `--timeout-seconds`, `--repetitions`, and `--max-attempts` to bound the plan. Ctrl+C cancels the run. Use `--program` to locate the pinned CLI, `--model` for an exact account-supported identifier, or `--auth-home` to select the native credential store. Codex and Hermes default to `gpt-5.4`. Claude defaults to `claude-haiku-4-5-20251001`. Codex records its requested identifier. Hermes and Claude check the model reported by the native stream.
+The default runs two serial attempts of `reuse-summary-formatter`, with and without Axiom. The time limit defaults to 120 seconds. Use `--timeout-seconds`, `--repetitions`, and `--max-attempts` to bound the plan. Ctrl+C cancels the run. Use `--program` to locate the pinned CLI, `--model` for an exact account-supported identifier, or `--auth-home` to select the native credential store. Codex and Hermes default to `gpt-5.4`. Claude defaults to `claude-haiku-4-5-20251001`. Codex records its requested identifier. Hermes matches the model echoed in native initialization and requires a terminal result for a native session. Claude checks the model reported by its native stream.
 
 The benchmark report and archive retain only a fixed reason for recognized Codex provider model rejection, access refusal, or rate limits. An exit without a recognized terminal event retains the generic blocked reason. If the provider rejects the requested model, use `--model` with an exact identifier supported by the same signed-in account.
+
+Hermes reports a fixed blocked reason when a matching nonzero native result identifies a failure before a session was established. If Hermes reports a credential or agent initialization failure, check the selected auth root's default-profile login and the exact account-supported model. Native error text stays out of the archive.
 
 An attempt can finish native execution and still block during fixture capture or verifier preparation. The attempt keeps those outcomes separate and reports a fixed reason for recognized capture failures. Blocked capture leaves that arm’s assertions ungraded. Replay verifies the recorded grading observations and remains blocked when an arm has no observation. Run the same reviewed pair again after resolving the capture issue to collect both grades.
 

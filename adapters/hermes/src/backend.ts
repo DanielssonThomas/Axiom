@@ -32,6 +32,12 @@ interface Trace {
   usage: BackendResult["usage"];
 }
 
+interface PreSessionFailure {
+  model: string;
+  exitCode: number;
+  startupFailure: "credentials-or-agent-init" | "other";
+}
+
 const unknownUsage = { metering: "unknown", reason: "Hermes did not expose measured token usage." } as const;
 
 function contains(root: string, path: string): boolean {
@@ -58,9 +64,9 @@ function safeLabel(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9_.:/-]{1,160}$/.test(value);
 }
 
-function normalize(stdout: string): Trace | undefined {
+function normalize(stdout: string): Trace | PreSessionFailure | undefined {
   let model: string | undefined;
-  let terminal: { session: string; exitCode: number; usage: Trace["usage"] } | undefined;
+  let terminal: Pick<Trace, "session" | "exitCode" | "usage"> | Omit<PreSessionFailure, "model"> | undefined;
   const calls: Trace["calls"] = [];
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
     if (terminal) return;
@@ -75,7 +81,13 @@ function normalize(stdout: string): Trace | undefined {
         ...(typeof event.is_error === "boolean" && { failed: event.is_error }),
       });
     } else if (event?.type === "result") {
-      if (!safeLabel(event.session_id) || !Number.isInteger(event.exit_code) || event.exit_code < 0) return;
+      if (!Number.isInteger(event.exit_code) || event.exit_code < 0) return;
+      if (event.session_id === "" && event.exit_code > 0) {
+        terminal = { exitCode: event.exit_code,
+          startupFailure: event.error === "credentials or agent init failed" ? "credentials-or-agent-init" : "other" };
+        continue;
+      }
+      if (!safeLabel(event.session_id)) return;
       const input: unknown = event.tokens?.input;
       const output: unknown = event.tokens?.output;
       const reported = typeof input === "number" && Number.isSafeInteger(input) && input >= 0
@@ -85,6 +97,7 @@ function normalize(stdout: string): Trace | undefined {
     }
   }
   if (terminal && model) {
+    if ("startupFailure" in terminal) return { ...terminal, model };
     const usage: Trace["usage"] = calls.some(({ name }) => name === "delegate_task")
       ? { metering: "unknown", reason: "Hermes terminal usage excludes delegated worker tokens." }
       : terminal.usage;
@@ -197,6 +210,9 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       if (!trace || trace.model !== request.host.model || trace.exitCode !== returned.code) {
         return blocked("The Hermes stream lacked a matching native model and terminal result.");
       }
+      if ("startupFailure" in trace) return blocked(trace.startupFailure === "credentials-or-agent-init"
+        ? "Hermes reported a credential or agent initialization failure before establishing a session."
+        : "The native Hermes run failed before establishing a session.");
 
       if (await realpath(traceDirectory) !== traceDirectory) return blocked("The Hermes trace archive changed during execution.");
       const name = `${request.id}-${randomUUID()}.json`;
