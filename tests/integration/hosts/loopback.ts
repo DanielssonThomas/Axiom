@@ -7,6 +7,7 @@ export const ordinaryPrompt = "Acknowledge this disposable native session.";
 export interface RequestObservation {
   model: string;
   text: string;
+  systemMessages: string[];
   toolResults: string[];
 }
 
@@ -104,6 +105,9 @@ export async function openLoopback(protocol: NativeHost, model: string,
       if (typeof requestedModel !== "string") throw new Error("The native fixture request did not include a model.");
       const messages = body && typeof body === "object" && "messages" in body ? body.messages : undefined;
       const responsesInput = body && typeof body === "object" && "input" in body ? body.input : undefined;
+      const systemMessages = Array.isArray(messages) ? messages.flatMap((message) =>
+        message?.role === "system" ? [strings(message.content).join("\n")] : [],
+      ) : [];
       const toolResults = protocol === "codex" && Array.isArray(responsesInput) ? responsesInput.flatMap((item) =>
         item?.type === "function_call_output" ? [strings(item.output).join("\n")] : [],
       ) : Array.isArray(messages) ? messages.flatMap((message) =>
@@ -112,7 +116,7 @@ export async function openLoopback(protocol: NativeHost, model: string,
             ? message.content.filter((part: { type?: string }) => part?.type === "tool_result").map((part: unknown) => strings(part).join("\n"))
             : [],
       ) : [];
-      const observation = { model: requestedModel, text: strings(body).join("\n"), toolResults };
+      const observation = { model: requestedModel, text: strings(body).join("\n"), systemMessages, toolResults };
       requests.push(observation);
       const tool = nextHermesTool;
       nextHermesTool = undefined;
