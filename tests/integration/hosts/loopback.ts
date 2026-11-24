@@ -47,12 +47,20 @@ function send(response: ServerResponse, { protocol, model, requestNumber, tool }
       id: "msg_fixture", type: "message", role: "assistant",
       content: [{ type: "output_text", text, annotations: [] }], status: "completed",
     };
-    for (const event of [
-      { type: "response.created", response: { id: "resp_fixture" } },
+    const responseId = `resp_fixture_${requestNumber}`;
+    const call = tool && { id: `item_fixture_${requestNumber}`, type: "function_call", status: "completed",
+      call_id: `call_fixture_${requestNumber}`, ...tool };
+    const items = call ? [
+      { type: "response.output_item.added", item: call, output_index: 0 },
+      { type: "response.output_item.done", item: call, output_index: 0 },
+    ] : [
       { type: "response.output_item.added", item: { ...message, content: [], status: "in_progress" } },
       { type: "response.output_text.delta", delta: text, item_id: message.id, output_index: 0, content_index: 0 },
       { type: "response.output_item.done", item: message },
-      { type: "response.completed", response: { id: "resp_fixture", status: "completed",
+    ];
+    for (const event of [
+      { type: "response.created", response: { id: responseId } }, ...items,
+      { type: "response.completed", response: { id: responseId, status: "completed",
         usage: { input_tokens: 9, output_tokens: 3, total_tokens: 12 } } },
     ]) frame(event);
   } else {
@@ -95,7 +103,10 @@ export async function openLoopback(protocol: NativeHost, model: string,
       const requestedModel = body && typeof body === "object" && "model" in body ? body.model : undefined;
       if (typeof requestedModel !== "string") throw new Error("The native fixture request did not include a model.");
       const messages = body && typeof body === "object" && "messages" in body ? body.messages : undefined;
-      const toolResults = Array.isArray(messages) ? messages.flatMap((message) =>
+      const responsesInput = body && typeof body === "object" && "input" in body ? body.input : undefined;
+      const toolResults = protocol === "codex" && Array.isArray(responsesInput) ? responsesInput.flatMap((item) =>
+        item?.type === "function_call_output" ? [strings(item.output).join("\n")] : [],
+      ) : Array.isArray(messages) ? messages.flatMap((message) =>
         message?.role === "tool" && typeof message.content === "string" ? [message.content]
           : protocol === "claude" && message?.role === "user" && Array.isArray(message.content)
             ? message.content.filter((part: { type?: string }) => part?.type === "tool_result").map((part: unknown) => strings(part).join("\n"))

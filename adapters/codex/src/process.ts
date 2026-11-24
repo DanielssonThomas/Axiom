@@ -15,6 +15,8 @@ interface NativeOptions {
   input?: string;
   /** Capture short administrative diagnostics in memory. Turn stderr is always discarded. */
   captureStderr?: boolean;
+  /** Opt in to experimental app-server methods during JSON-RPC initialization. */
+  experimentalApi?: true;
   onLine?: (line: string, write: (value: unknown) => void, end: () => void) => void;
 }
 
@@ -84,7 +86,10 @@ export async function runCodex(profile: CodexProfile, args: readonly string[], o
     if (signal.aborted) kill();
     if (options.onLine) {
       input.write(JSON.stringify({
-        id: 1, method: "initialize", params: { clientInfo: { name: "axiom-native-adapter", version: "1.0.0" } },
+        id: 1, method: "initialize", params: {
+          clientInfo: { name: "axiom-native-adapter", version: "1.0.0" },
+          ...(options.experimentalApi && { capabilities: { experimentalApi: true } }),
+        },
       }) + "\n");
     } else {
       input.end(options.input);
