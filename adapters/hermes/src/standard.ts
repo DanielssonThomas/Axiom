@@ -35,7 +35,8 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
     const profile = "axiom-bench-" + randomUUID().slice(0, 12);
     const selectedProvider = options.loopback ? "custom" : provider;
     const remaining = () => Math.max(0, request.timeoutMs - (performance.now() - started));
-    const env = { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, HERMES_DISABLE_AUTO_UPDATE: "1",
+    const env = { PATH: process.env.PATH, HOME: home, HERMES_HOME: home,
+      HERMES_DISABLE_AUTO_UPDATE: "1", HERMES_DISABLE_LAZY_INSTALLS: "1",
       HERMES_TUI_GATEWAY_URL: "", HERMES_WRITE_SAFE_ROOT: request.workspace,
       HERMES_CODEX_BASE_URL: "https://chatgpt.com/backend-api/codex",
       ...(options.loopback && { OPENAI_API_KEY: "loopback-only" }) };

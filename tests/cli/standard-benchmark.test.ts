@@ -126,8 +126,9 @@ test.runIf(Boolean(program) && process.platform === "linux")("starts the pinned 
   try {
     await Promise.all([mkdir(authHome), mkdir(workspace)]);
     await writeFile(join(authHome, "auth.json"), credentials, { mode: 0o600 });
-    // Substitute only the provider URL in this local launcher. Keep Hermes's real Codex transport and auth checks.
-    await writeFile(launcher, ["#!/bin/sh", `export HERMES_CODEX_BASE_URL=${shellLiteral(server.endpoint + "/backend-api/codex")}`,
+    // Check the launch guard and substitute the provider URL while keeping Hermes's native transport and auth.
+    await writeFile(launcher, ["#!/bin/sh", '[ "${HERMES_DISABLE_LAZY_INSTALLS:-}" = 1 ] || exit 93',
+      `export HERMES_CODEX_BASE_URL=${shellLiteral(server.endpoint + "/backend-api/codex")}`,
       `exec ${shellLiteral(await realpath(program!))} "$@"`, ""].join("\n"), { mode: 0o700 });
     const backend = createHermesAccountBackend({ executable: launcher, authHome, archiveDirectory, bundle: join(root, "unused-bundle") });
     const result = await backend.run({ id: "codex-route", caseId: "fixture", prompt: "Acknowledge the disposable transport fixture.",

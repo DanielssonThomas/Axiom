@@ -51,8 +51,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       const formatted = formatHermesWorkerContext(brief);
       const command = {
         executable: executable!, cwd: workspace, signal: AbortSignal.timeout(45_000), deadline: performance.now() + 45_000,
-        env: { PATH: process.env.PATH, HOME: home, HERMES_HOME: home,
-          OPENAI_API_KEY: "loopback-only", HERMES_DISABLE_AUTO_UPDATE: "1" },
+        env: { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, OPENAI_API_KEY: "loopback-only",
+          HERMES_DISABLE_AUTO_UPDATE: "1", HERMES_DISABLE_LAZY_INSTALLS: "1" },
       };
       const version = await runHermes({ ...command, args: ["--version"] });
       expect(version).toMatchObject({ code: 0, stdout: expect.stringContaining(`Hermes Agent v${hermesVersion}`) });
@@ -208,7 +208,8 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
       if (!artifact) throw new Error("Expected the Hermes fixture artifact.");
       const command = {
         executable: executable!, cwd: workspace, signal: AbortSignal.timeout(35_000), deadline: performance.now() + 35_000,
-        env: { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, HERMES_DISABLE_AUTO_UPDATE: "1" },
+        env: { PATH: process.env.PATH, HOME: home, HERMES_HOME: home,
+          HERMES_DISABLE_AUTO_UPDATE: "1", HERMES_DISABLE_LAZY_INSTALLS: "1" },
       };
       expect((await runHermes({ ...command, args: ["profile", "create", target.profile, "--no-alias", "--no-credentials"] })).code).toBe(0);
       expect(changeHermesPlugin(target, { kind: "install", bundle: artifact.directory }).outcome).toEqual({ status: "passed" });
