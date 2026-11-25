@@ -50,7 +50,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       });
       const formatted = formatHermesWorkerContext(brief);
       const command = {
-        executable: executable!, cwd: workspace, signal: AbortSignal.timeout(45_000), deadline: performance.now() + 45_000,
+        executable: executable!, cwd: workspace, signal: AbortSignal.timeout(60_000), deadline: performance.now() + 60_000,
         env: { PATH: process.env.PATH, HOME: home, HERMES_HOME: home, OPENAI_API_KEY: "loopback-only",
           HERMES_DISABLE_AUTO_UPDATE: "1", HERMES_DISABLE_LAZY_INSTALLS: "1" },
       };
@@ -197,16 +197,25 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       } finally {
         await gateway.stop();
       }
-      if (profiled) {
+      for (const alterInventory of profiled ? [false, true] : []) {
+        const manifestPath = join(selected, "plugins", "axiom", "axiom-bundle.json");
+        const manifestBytes = await readFile(manifestPath);
+        const manifest = JSON.parse(manifestBytes.toString("utf8"));
         const definitions = await Promise.all(profiles.map(async ({ id }) => {
-          const path = join(selected, "plugins", "axiom", "profiles", id, "profile.json");
-          return { id, path, bytes: await readFile(path) };
+          const relative = `profiles/${id}/profile.json`;
+          const path = join(selected, "plugins", "axiom", relative);
+          return { id, path, relative, bytes: await readFile(path) };
         }));
-        for (const { id, path, bytes } of definitions) {
-          const replacement = { ...JSON.parse(bytes.toString("utf8")), extends: id === "ui-atomic" ? ["angular-nx"] : [] };
-          await writeFile(path, JSON.stringify(replacement));
+        for (const { id, path, relative, bytes } of definitions) {
+          const replacement = JSON.stringify({ ...JSON.parse(bytes.toString("utf8")), extends: id === "ui-atomic" ? ["angular-nx"] : [] });
+          await writeFile(path, replacement);
+          if (alterInventory) manifest.files.find((file: { path: string }) => file.path === relative).digest = hash(replacement);
         }
-        const restore = () => Promise.all(definitions.map(({ path, bytes }) => writeFile(path, bytes)));
+        if (alterInventory) await writeFile(manifestPath, JSON.stringify(manifest));
+        const restore = () => Promise.all([
+          ...definitions.map(({ path, bytes }) => writeFile(path, bytes)),
+          writeFile(manifestPath, manifestBytes),
+        ]);
         const restarted = await openHermesGateway({
           ...command, args: ["gateway", "run", "--no-supervise", "--external-supervisor"],
         }, home, target.profile);
@@ -226,7 +235,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           expect(result.code).toBe(0);
           const attached = loopback.requests.flatMap(({ toolResults }) => toolResults.map((raw) => JSON.parse(raw)))
             .some((result) => result.inherited_profiles?.some(({ id }: { id: string }) => id === "angular-nx"));
-          expect(attached).toBe(false);
+          expect(attached, `changed inventory: ${alterInventory}`).toBe(false);
           const terminal = result.stdout.trim().split("\n").map((line) => JSON.parse(line)).find(({ type }) => type === "result");
           expect(terminal?.session_id).toBeTruthy();
           expect(inspectHermesActivation(target, terminal.session_id).loaded.status).toBe("blocked");
@@ -239,7 +248,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       await loopback.close();
       await rm(root, { recursive: true, force: true });
     }
-  }, 55_000,
+  }, 70_000,
 );
 
 test.runIf(Boolean(executable) && process.platform === "linux")(
