@@ -89,6 +89,10 @@ test("replays the graded arm when a completed native arm could not be captured",
       } },
     }));
     expect(result.outcome.status).toBe("blocked");
+    expect(result.report).toMatchObject({ results: { execution: { status: "blocked" },
+      behavior: { with_axiom: { status: "passed" }, without_axiom: { status: "blocked" } },
+      comparisons: [{ outcome: "unavailable" }],
+    } });
     if (!("report" in result) || !result.report) throw new Error("Expected the standard benchmark archive.");
     const { evidenceDirectory, evidenceDigest, observations, report } = result.report;
     const [graded, uncaptured] = report.attempts;
@@ -108,6 +112,32 @@ test("replays the graded arm when a completed native arm could not be captured",
     ] } });
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 20_000);
+
+test("keeps successful execution, Axiom behavior, baseline failures, and replay distinct", async () => {
+  const root = await mkdtemp(join(tmpdir(), "axiom-standard-comparison-"));
+  const digest = `sha256:${"c".repeat(64)}` as const;
+  try {
+    const result = await runStandardArchive({
+      repository, evidenceDirectory: root, allowNative: true, timeoutSeconds: 15, repetitions: 1,
+    }, host, "injected", async () => ({
+      policy: { version: "1", digest, profiles: [] }, bundleDigest: digest,
+      backend: { async run(request) {
+        if (request.mode === "with_axiom") await writeFile(join(request.workspace, "command.mjs"), patchedCommand);
+        return { requestId: request.id, host, outcome: { status: "passed" }, durationMs: 2, artifacts: [],
+          usage: { metering: "unknown", reason: "Fixture usage unavailable." } };
+      } },
+    }));
+    const results = { execution: { status: "passed" },
+      behavior: { with_axiom: { status: "passed" }, without_axiom: { status: "failed" } },
+      comparisons: [{ case: "reuse-summary-formatter", version: "1", repetition: 1, outcome: "improved" }],
+    };
+    expect(result.report).toMatchObject({ results, report: { outcome: { status: "failed" } },
+      qualification: { status: "blocked" } });
+    if (!result.report) throw new Error("Expected an archive.");
+    const replay = await reviewNativeBenchmark(repository, result.report.evidenceDirectory, result.report.evidenceDigest);
+    expect(replay).toMatchObject({ outcome: { status: "passed" }, report: { results, benchmarkOutcome: { status: "failed" } } });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test.runIf(Boolean(program) && process.platform === "linux")("starts the pinned Hermes Codex route using a default-profile login", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-hermes-codex-native-"));
