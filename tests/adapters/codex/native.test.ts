@@ -126,7 +126,7 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
   }, 55_000,
 );
 
-test.runIf(Boolean(executable))("uses the actual Codex CLI for local lifecycle and credential-free execution", async () => {
+test.runIf(executable && process.platform === "linux")("uses the actual Codex CLI for local lifecycle and credential-free execution", async () => {
   const source = process.cwd();
   const identity = await snapshotSource({ root: source });
   const root = await mkdtemp(join(tmpdir(), "axiom-native-codex-"));
