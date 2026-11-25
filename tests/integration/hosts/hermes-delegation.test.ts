@@ -238,7 +238,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           expect(attached, `changed inventory: ${alterInventory}`).toBe(false);
           const terminal = result.stdout.trim().split("\n").map((line) => JSON.parse(line)).find(({ type }) => type === "result");
           expect(terminal?.session_id).toBeTruthy();
-          expect(inspectHermesActivation(target, terminal.session_id).loaded.status).toBe("blocked");
+          expect(inspectHermesActivation(target, terminal.session_id).loaded.status).toBe("not_run");
+          expect(loopback.requests[0]?.systemMessages.some((message) => message.includes(artifact.manifest.policy.digest))).toBe(false);
         } finally {
           if ("stop" in restarted) await restarted.stop();
           await restore();
