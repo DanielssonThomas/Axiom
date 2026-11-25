@@ -135,7 +135,9 @@ test.runIf(executable && (process.platform === "linux" || windows))(
       const terminal = await receive(({ method }) => method === "turn/completed");
       expect(terminal).toMatchObject({ params: { threadId, turn: { id: turnId, status: "completed" } } });
       expect(loopback.requests).toHaveLength(askRequestCount + 1);
-      expect(JSON.parse(loopback.requests.at(-1)!.toolResults.at(-1)!)).toEqual({ answers: {} });
+      expect(JSON.parse(loopback.requests.at(-1)!.toolResults.at(-1)!)).toEqual({
+        answers: { format: { answers: ["CSV"] } },
+      });
       const delivered = await readFile(project, "utf8");
       expect(delivered).toBe(fixture);
       expect(await readdir(profile.workspace)).toEqual([fixtureName]);

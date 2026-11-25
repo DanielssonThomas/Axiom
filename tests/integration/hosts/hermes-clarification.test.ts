@@ -185,7 +185,7 @@ test.runIf(executable && process.platform === "linux")(
       expect((await request(clarify, answer)).status).toBe(409);
       expect(loopback.requests).toHaveLength(3);
       expect(JSON.parse(loopback.requests[2]!.toolResults[1]!)).toMatchObject({ responses: [{ question,
-        status: "skipped", user_response: null }] });
+        status: "answered", user_response: choices[1] }] });
 
       const receipt = await request(`${route}/events`);
       expect(receipt.status).toBe(200);
