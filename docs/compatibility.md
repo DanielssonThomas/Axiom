@@ -94,3 +94,31 @@ pnpm test -- tests/integration/hosts
 ```
 
 An unconfigured host reports blocked installation. The suite uses synthetic localhost providers and leaves external model behavior unrun. The isolated Claude benchmark probe runs two pairs through the independently metered provider broker. The independent graders fail the unchanged reuse artifact and the missing preview disposition in both arms, even when all four native processes complete. The preview check records the unavailable capability using the sandbox configuration and the tool surface observed at the broker. The offline replay reproduces the assertion outcomes.
+
+## Live qualification run plan
+
+Run preflight on a clean reviewed Linux checkout with Node.js 24, built outputs, and the three pinned native CLIs on `PATH`. The `--preflight` flag checks the reviewed commit, grader, cases, executable version, limits, and Bubblewrap for Claude. It uses a disposable home for `--version`. A passing preflight leaves qualification `blocked` until live evidence is collected.
+
+```sh
+BASELINE=$(git rev-parse HEAD)
+node packages/cli/dist/index.js benchmark claude --preflight --baseline "$BASELINE" \
+  --model claude-haiku-4-5-20251001 --token-budget 1000000 --max-output-tokens 2048 \
+  --timeout-seconds 600 --repetitions 1 --case reuse-summary-formatter \
+  --case report-unavailable-preview --case clarify-material-decision --case resolve-format-decision
+node packages/cli/dist/index.js benchmark codex --mode standard --preflight --baseline "$BASELINE" \
+  --model gpt-5.4 --case reuse-summary-formatter --repetitions 1 --max-attempts 2 --timeout-seconds 120
+node packages/cli/dist/index.js benchmark hermes --mode standard --preflight --baseline "$BASELINE" \
+  --model gpt-5.4 --case reuse-summary-formatter --repetitions 1 --max-attempts 2 --timeout-seconds 120
+```
+
+Use `--program` to select a pinned executable outside `PATH`. For Codex and Hermes, select an exact model available to the authorized account. After approval, use the same reviewed revision and limits and replace `--preflight` with the authorization flag for that route. Store credentials through the provider or host login flow. [Native authentication and evidence replay](install.md#run-a-local-behavioral-benchmark)
+
+| Host and route | Credentials | Approval for the initial run |
+| --- | --- | --- |
+| Claude Code 2.1.330, strict | An Anthropic API key with paid API access to `claude-haiku-4-5-20251001` in the trusted Linux operator environment as `ANTHROPIC_API_KEY`. The owner-only hosted workflow on `main` reads `AXIOM_ANTHROPIC_API_KEY` from Actions secrets. | `--allow-paid` for one pair per case, eight native attempts total, up to 1,000,000 input and output tokens combined including cache tokens, 2,048 output tokens per request, and 600 seconds. |
+| Codex 0.172.0-alpha.2, standard | A dedicated Codex Linux home with a ChatGPT file-store login that can use the approved model. Select it with `--auth-home`. | `--allow-native` for one pair, two attempts, and 120 seconds using the signed-in account's quota. |
+| Hermes 0.23.3, standard | An OpenAI Codex OAuth login in the `default` profile of a dedicated Hermes Linux auth root, with access to the approved model. Select that root with `--auth-home`. | `--allow-native` for one pair, two attempts, and 120 seconds using the signed-in account's quota. |
+
+The Claude cap is enforced by the broker. Its full-context reservation can stop a run before the cap is consumed. The standard Codex and Hermes runs have time and attempt limits and leave aggregate token and dollar usage unknown. Approve those runs only if account-quota use within the attempt and time limits is acceptable. Review the local, private evidence after each run. [Benchmark replay](install.md#review-the-saved-evidence)
+
+Claude still needs independently observed profile application, delegated-worker delivery and parent verification, and remaining ordinary-session lifecycle evidence. Codex and Hermes need a trusted budgeted provider route and live graders for interactive clarification, verification reporting, profile application, and delegated execution. The native clarification, profile, and worker probes above establish scoped transport evidence with scripted providers. Full qualification still depends on the real-model and installed-session evidence in [#19](https://github.com/DanielssonThomas/Axiom/issues/19).

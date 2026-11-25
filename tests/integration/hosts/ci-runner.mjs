@@ -3,6 +3,10 @@ import { benchmarkReadiness, defaultBenchmarkLimits, defaultCase, runTrustedClau
 import { unavailablePreviewCase } from "../../../evals/graders/dist/index.js";
 import { anthropicMessages } from "../../../packages/cli/dist/provider-budget.js";
 
+export const claudeQualificationCases = Object.freeze([
+  defaultCase, unavailablePreviewCase.id, "clarify-material-decision", "resolve-format-decision",
+]);
+
 export default {
   async readiness({ host, model, os }, signal) {
     if (process.env.AXIOM_ALLOW_PAID !== "true") return "authorization-required";
@@ -16,7 +20,7 @@ export default {
       repository: process.cwd(),
       model: trial.model,
       allowPaid: true,
-      caseIds: [defaultCase, unavailablePreviewCase.id],
+      caseIds: claudeQualificationCases,
       tokenBudget: trial.tokenLimit,
       timeoutSeconds: Number(process.env.AXIOM_TIMEOUT_MINUTES) * 60,
       ...(process.env.AXIOM_CLAUDE_PROGRAM ? { program: process.env.AXIOM_CLAUDE_PROGRAM } : {}),

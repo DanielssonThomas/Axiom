@@ -86,8 +86,8 @@ export async function reviewedCases(root: string) {
   return catalog;
 }
 
-export async function prepareBenchmarkArchive(options: ArchiveOptions, baseline: ReviewedBaseline, revision: string,
-  baselineRef: string, supports: (item: EvaluationCase) => boolean, checkPath?: (path: string) => void) {
+export async function inspectBenchmarkPlan(options: ArchiveOptions, baseline: ReviewedBaseline, revision: string,
+  supports: (item: EvaluationCase) => boolean, checkPath?: (path: string) => void) {
   const repository = await realpath(options.repository);
   if (await requireCleanBenchmarkRevision(repository) !== revision) throw new Error("The reviewed revision changed.");
   checkPath?.(repository);
@@ -105,13 +105,19 @@ export async function prepareBenchmarkArchive(options: ArchiveOptions, baseline:
     return item;
   });
   const profiles = [...new Set(cases.flatMap((item) => item.profiles.map(({ id }) => id)))];
+  return { repository, grader, catalog, cases, caseIds, profiles };
+}
+
+export async function prepareBenchmarkArchive(options: ArchiveOptions, baseline: ReviewedBaseline, revision: string,
+  baselineRef: string, supports: (item: EvaluationCase) => boolean, checkPath?: (path: string) => void) {
+  const plan = await inspectBenchmarkPlan(options, baseline, revision, supports, checkPath);
+  const { repository } = plan;
   const destination = resolve(options.evidenceDirectory ?? join(repository, ".axiom", "runs"));
   await mkdir(destination, { recursive: true, mode: 0o700 });
   const evidenceParent = await realpath(destination);
   checkPath?.(evidenceParent);
   const evidenceDirectory = await mkdtemp(join(evidenceParent, "benchmark-"));
-  return { repository, evidenceDirectory, store: new EvidenceStore(evidenceDirectory), options, baseline, baselineRef, revision,
-    grader, catalog, cases, caseIds, profiles };
+  return { ...plan, evidenceDirectory, store: new EvidenceStore(evidenceDirectory), options, baseline, baselineRef, revision };
 }
 
 type PreparedArchive = Awaited<ReturnType<typeof prepareBenchmarkArchive>>;

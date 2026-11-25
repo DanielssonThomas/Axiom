@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { buildClaudeBundle, createClaudeBackend, supportedVersion } from "@axiom/claude-adapter";
 import { loadBundleWorkspace } from "@axiom/bundles";
-import type { Evidence, EvidenceOutcome, Usage } from "@axiom/contracts";
+import type { EvaluationCase, Evidence, EvidenceOutcome, Usage } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { unavailablePreviewCase, type GradingAction } from "@axiom/graders";
 import { assertPrivateBenchmarkPath, launchClaudeSandbox } from "./claude-sandbox.js";
@@ -20,13 +20,20 @@ const exec = promisify(execFile);
 const blocked = (reason: string): EvidenceOutcome => ({ status: "blocked", reason });
 export { defaultCase } from "./benchmark-archive.js";
 export const defaultBenchmarkLimits = { tokenBudget: 300_000, maxOutputTokens: 2_048, timeoutSeconds: 120, repetitions: 1 };
-const host = { agent: "claude", version: supportedVersion, model: benchmarkModel, os: "linux", surface: "cli" };
+export const strictBenchmarkHost = { agent: "claude", version: supportedVersion, model: benchmarkModel, os: "linux", surface: "cli" };
+export const strictHostUnavailable = "The independently budgeted native route currently requires pinned Claude Code on Linux with " + benchmarkModel + ".";
 const observableGraders = new Set(["artifact.existing-formatter", "artifact.command-boundary", "artifact.canonical-model",
   "artifact.preserve-acceptance", "trace.context-discovery"]);
 
 
 function isUnavailablePreview(evaluation: { id: string; version: string }) {
   return evaluation.id === unavailablePreviewCase.id && evaluation.version === unavailablePreviewCase.version;
+}
+
+export function supportsStrictBenchmarkCase(item: EvaluationCase) {
+  return supportsClaudeClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
+    (isUnavailablePreview(item) && grader === unavailablePreviewCase.grader)) &&
+    item.requiredCapabilities.every((id) => id === "action-trace"));
 }
 
 function measuredAttempt(before: Usage, after: Usage): Usage {
@@ -46,23 +53,29 @@ export interface NativeBenchmarkOptions extends ArchiveOptions {
   maxOutputTokens: number;
 }
 
-export function isSupportedBenchmarkBudget(value: NativeBenchmarkOptions): boolean {
+export function isSupportedBenchmarkBudget(value: Pick<NativeBenchmarkOptions, "tokenBudget" | "maxOutputTokens" | "timeoutSeconds" | "repetitions">): boolean {
   const { tokenBudget, maxOutputTokens, timeoutSeconds, repetitions } = value;
   return [tokenBudget, maxOutputTokens, timeoutSeconds, repetitions].every((n) => Number.isSafeInteger(n) && n >= 1)
     && tokenBudget >= inputReservation + maxOutputTokens && tokenBudget <= 1_000_000 && maxOutputTokens <= 8_192
     && timeoutSeconds <= 900 && repetitions <= 10;
 }
 
+export async function assertClaudeSandboxAvailable(signal?: AbortSignal) {
+  await exec("/usr/bin/bwrap", ["--unshare-all", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
+    "--symlink", "usr/lib64", "/lib64", "--", "/usr/bin/true"], {
+    env: {}, timeout: 5_000, ...(signal === undefined ? {} : { signal }),
+  });
+}
+
 export async function benchmarkReadiness(agent: string, model: string, program?: string, signal?: AbortSignal) {
-  if (!process.env.AXIOM_ALLOW_PAID || process.env.AXIOM_ALLOW_PAID !== "true" || agent !== host.agent || model !== host.model
-      || process.platform !== host.os) return "runner-unavailable" as const;
+  const { agent: supportedAgent, model: supportedModel, os } = strictBenchmarkHost;
+  if (process.env.AXIOM_ALLOW_PAID !== "true" || agent !== supportedAgent || model !== supportedModel || process.platform !== os) {
+    return "runner-unavailable" as const;
+  }
   if (!process.env.ANTHROPIC_API_KEY?.trim()) return "credentials-unavailable" as const;
   try {
     await nativeProgram("claude", program);
-    await exec("/usr/bin/bwrap", ["--unshare-all", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib",
-      "--symlink", "usr/lib64", "/lib64", "--", "/usr/bin/true"], {
-      env: {}, timeout: 5_000, ...(signal === undefined ? {} : { signal }),
-    });
+    await assertClaudeSandboxAvailable(signal);
     return "ready" as const;
   } catch { return "runner-unavailable" as const; }
 }
@@ -85,10 +98,7 @@ export async function runTrustedClaude(
 ) {
   if (!options.allowPaid || (options.model ?? benchmarkModel) !== benchmarkModel || process.platform !== "linux" ||
       !isSupportedBenchmarkBudget(options)) throw new Error("The isolated benchmark scope requires explicit authorized limits.");
-  const archive = await prepareBenchmarkArchive(options, baseline, revision, baselineRef, (item) =>
-    supportsClaudeClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
-      (isUnavailablePreview(item) && grader === unavailablePreviewCase.grader)) &&
-    item.requiredCapabilities.every((id) => id === "action-trace")), assertPrivateBenchmarkPath);
+  const archive = await prepareBenchmarkArchive(options, baseline, revision, baselineRef, supportsStrictBenchmarkCase, assertPrivateBenchmarkPath);
   const { repository, evidenceDirectory, store, profiles } = archive;
   const temporary = await mkdtemp("/tmp/axiom-live-");
   const deadline = AbortSignal.timeout(options.timeoutSeconds * 1000);
@@ -116,7 +126,7 @@ export async function runTrustedClaude(
     try {
       return await runArchivedBenchmark(archive, {
         control: { mode: "strict", provider: providerRoute(upstream), tokenBudget: options.tokenBudget, maxOutputTokens: options.maxOutputTokens },
-        host, policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
+        host: strictBenchmarkHost, policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
         capabilities: [{ id: "action-trace", available: true }], signal: cancellation,
         backend: { async run(request, abort) {
           workspaces.set(request.id, request.workspace);
@@ -170,7 +180,7 @@ export async function runTrustedClaude(
 
 export async function runNativeBenchmark(agent: string, options: NativeBenchmarkOptions, signal?: AbortSignal) {
   if (agent !== "claude" || (options.model ?? benchmarkModel) !== benchmarkModel || process.platform !== "linux") {
-    return { outcome: blocked("The independently budgeted native route currently requires pinned Claude Code on Linux with " + benchmarkModel + ".") };
+    return { outcome: blocked(strictHostUnavailable) };
   }
   if (!options.allowPaid) return { outcome: blocked("Authorize paid execution explicitly with --allow-paid.") };
   if (!isSupportedBenchmarkBudget(options)) return { outcome: blocked("The input reservation, output cap, token budget or time limits are invalid.") };

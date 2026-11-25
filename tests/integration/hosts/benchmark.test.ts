@@ -203,38 +203,40 @@ test("requires a material output choice and a required canonical clarification a
 
 
 test.runIf(executable && process.platform === "linux" && process.env.AXIOM_TEST_BWRAP === "1")(
-  "grades clarification through the bounded native sandbox while preserving the preview surface", async () => {
+  "exercises the strict live batch through the pinned Claude sandbox and independently replays its grades", async () => {
     const repository = process.cwd();
     const revision = await benchmarkRevision(repository);
     const root = await mkdtemp(join(tmpdir(), "axiom-claude-strict-clarification-"));
     const baseline = await prepareReviewedBaseline(repository, root, revision, { baselineRef: revision });
+    const runnerUrl = new URL("./ci-runner.mjs", import.meta.url).href;
+    const { claudeQualificationCases } = await import(runnerUrl) as { claudeQualificationCases: readonly string[] };
     const toolSurfaces: string[][] = [];
     const server = await openLoopback("claude", benchmarkModel, ({ text, toolResults }) => {
-      if (text.includes("Record the disposition of the required browser preview")) return;
+      if (text.includes("Record the disposition of the required browser preview") || text.includes("Implement the command behavior described")) return;
       if (toolResults.length === 0) return { name: "Read", arguments: '{"file_path":"issue.txt"}' };
       if (toolResults.length === 1) return { name: "AskUserQuestion", arguments: JSON.stringify({
-        questions: [{ question: "Which report format should I implement?", header: "Export", multiSelect: false,
+        questions: [{ question: toolResults[0]?.includes("target audience undecided")
+          ? "Which target audience should receive the summary output?" : "Which report format should I implement?",
+          header: "Output", multiSelect: false,
           options: [{ label: "CSV", description: "Delimited" }, { label: "JSON", description: "Array" }] }],
       }) };
     });
     try {
       const result = await runTrustedClaude({ ...defaultBenchmarkLimits, repository, program: executable!, allowPaid: true,
-        evidenceDirectory: join(root, "evidence"), caseIds: ["resolve-format-decision", "report-unavailable-preview"],
+        evidenceDirectory: join(root, "evidence"), caseIds: claudeQualificationCases,
       }, baseline, revision, revision, (body, signal) => {
         const tools = body.tools as { name: string }[];
         toolSurfaces.push(tools.map(({ name }) => name));
         expect(Number(body.max_tokens)).toBeLessThanOrEqual(defaultBenchmarkLimits.maxOutputTokens);
         return fetch(server.endpoint + "/v1/messages", { method: "POST", body: JSON.stringify(body), signal });
       });
-      expect(result).toMatchObject({ mode: "strict", provider: "injected", metering: { inputTokens: 72, outputTokens: 24 } });
-      expect(result.report.attempts.map(({ execution, outcome }) => [execution?.outcome.status, outcome.status])).toEqual([
-        ["passed", "passed"], ["passed", "passed"], ["passed", "failed"], ["passed", "failed"],
-      ]);
-      expect(toolSurfaces).toHaveLength(8);
+      expect(result).toMatchObject({ mode: "strict", provider: "injected", metering: { inputTokens: 144, outputTokens: 48 } });
+      expect(result.report.attempts.map(({ case: evaluation, execution, outcome }) => [evaluation.id, execution?.outcome.status, outcome.status]))
+        .toEqual(claudeQualificationCases.flatMap((id, index) => Array.from({ length: 2 }, () => [id, "passed", index < 2 ? "failed" : "passed"])));
       expect(toolSurfaces.map((tools) => tools.includes("AskUserQuestion"))).toEqual([
-        true, true, true, true, true, true, false, false,
+        ...Array<boolean>(4).fill(false), ...Array<boolean>(12).fill(true),
       ]);
-      for (const attempt of result.report.attempts.slice(2)) {
+      for (const attempt of result.report.attempts.slice(2, 4)) {
         expect(attempt.assertions[0]?.outcome).toMatchObject({ status: "failed", reason: expect.stringMatching(/verification record.*missing/i) });
       }
       expect(await reviewNativeBenchmark(repository, result.evidenceDirectory, result.evidenceDigest)).toMatchObject({

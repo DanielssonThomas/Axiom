@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { EvidenceOutcome } from "@axiom/contracts";
 import { runBenchmarkRequest } from "./benchmark.js";
+import { runBenchmarkPreflight } from "./benchmark-preflight.js";
 import { reviewNativeBenchmark } from "./benchmark-review.js";
 import { runCheck } from "./check.js";
 import { runDoctor } from "./doctor.js";
@@ -67,12 +68,14 @@ function parse(args: readonly string[]): Operation | undefined {
     if (args.includes("--request")) return expert("benchmark", args, agent);
     const flags = options(args, ["--mode", "--auth-home", "--program", "--model", "--evidence", "--baseline", "--case",
       "--token-budget", "--max-output-tokens", "--timeout-seconds", "--repetitions", "--max-attempts"],
-    "--case", ["--allow-paid", "--allow-native"]);
+    "--case", ["--allow-paid", "--allow-native", "--preflight"]);
     if (!flags) return;
     const mode = flags.get("--mode") ?? "strict";
     if (mode !== "standard" && mode !== "strict") return;
     if (mode === "standard" ? ["--allow-paid", "--token-budget", "--max-output-tokens"].some(flags.has)
       : ["--allow-native", "--auth-home", "--max-attempts"].some(flags.has)) return;
+    const preflight = flags.has("--preflight");
+    if (preflight && ["--allow-paid", "--allow-native"].some(flags.has)) return;
     const numbers = {
       tokenBudget: "--token-budget", maxOutputTokens: "--max-output-tokens",
       timeoutSeconds: "--timeout-seconds", repetitions: "--repetitions",
@@ -94,13 +97,16 @@ function parse(args: readonly string[]): Operation | undefined {
       ...(program ? { program: resolve(program) } : {}), ...(evidence ? { evidenceDirectory: resolve(evidence) } : {}),
       ...(baselineRef ? { baselineRef } : {}), ...(caseIds ? { caseIds } : {}), ...(model ? { model } : {}),
     };
+    const maxAttempts = flags.get("--max-attempts");
+    if (maxAttempts !== undefined && !/^\d+$/.test(maxAttempts)) return;
+    const attemptLimit = maxAttempts === undefined ? {} : { maxAttempts: Number(maxAttempts) };
+    if (preflight) return { summary: { command: "benchmark", agent, mode, phase: "preflight" }, run: (signal) =>
+      runBenchmarkPreflight(agent, { ...shared, ...limits, ...attemptLimit, mode }, signal),
+    };
     if (mode === "standard") {
-      const maxAttempts = flags.get("--max-attempts");
-      if (maxAttempts !== undefined && !/^\d+$/.test(maxAttempts)) return;
       const authHome = flags.get("--auth-home");
       return { summary: { command: "benchmark", agent, mode }, run: (signal) => runStandardBenchmark(agent, {
-        ...shared, allowNative: flags.has("--allow-native"),
-        ...(maxAttempts !== undefined && { maxAttempts: Number(maxAttempts) }),
+        ...shared, ...attemptLimit, allowNative: flags.has("--allow-native"),
         ...(authHome && { authHome: resolve(authHome) }),
       }, signal) };
     }

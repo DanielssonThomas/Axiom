@@ -74,6 +74,14 @@ test("the installed-host runner requires separate paid approval before inspectin
   }
 });
 
+test("the strict installed-host batch includes reuse, verification reporting, and both reviewed clarification cases", async () => {
+  const runnerUrl = new URL("../integration/hosts/ci-runner.mjs", import.meta.url).href;
+  const { claudeQualificationCases } = await import(runnerUrl) as { claudeQualificationCases?: readonly string[] };
+  expect(claudeQualificationCases).toEqual([
+    "reuse-summary-formatter", "report-unavailable-preview", "clarify-material-decision", "resolve-format-decision",
+  ]);
+});
+
 test("requires a complete immutable host selection and bounded numeric limits", () => {
   expect(request()).toMatchObject({ host: "codex", model: "fixture-model", os: "linux", attempts: 2, tokenBudget: 100 });
   for (const invalid of [
