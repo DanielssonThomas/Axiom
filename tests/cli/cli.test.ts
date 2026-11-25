@@ -120,7 +120,7 @@ test("check runs a documented repository command and reports its observed failur
   } } });
 });
 
-test("runs both aliases through paired benchmark grading and refuses fixture-only conformance", () => {
+function benchmarkRequest(runtime: "fixture" | "isolated") {
   const root = directory();
   const fixture = "evals/cases/fixtures/example";
   mkdirSync(join(root, fixture), { recursive: true });
@@ -142,31 +142,44 @@ test("runs both aliases through paired benchmark grading and refuses fixture-onl
       return { source: observation.source, assertions: [{ criterionId: "observed", outcome: { status: "passed" } }] };
     } },
     async openRuntime(workspace) {
-      return { kind: "fixture", workspace, close: async () => {}, backend: { async run(request) {
-        return { requestId: request.id, host: request.host, outcome: { status: "passed" }, durationMs: 1,
+      return { kind: ${JSON.stringify(runtime)}, workspace, close: async () => {}, backend: { async run(request) {
+        return { requestId: request.id, ${runtime === "fixture" ? "host: request.host, " : ""}outcome: { status: "passed" }, durationMs: 1,
           artifacts: [], usage: { metering: "reported", inputTokens: 2, outputTokens: 1 } };
       } } };
     }
   };`;
   writeFileSync(path, fixtureModule);
+  return path;
+}
+
+function comparableBenchmark(alias: string, path: string) {
+  const { output, code } = run(alias, "codex", "--request", path, "--allow-paid");
+  return { code, command: output.command, agent: output.agent, status: output.status,
+    reason: output.reason, attempts: output.report?.attempts.map((attempt: {
+      mode: string; runtime: string; outcome: { status: string };
+    }) => ({ mode: attempt.mode, runtime: attempt.runtime, status: attempt.outcome.status })) };
+}
+
+test("requires authorization for a fixture benchmark request", () => {
+  const path = benchmarkRequest("fixture");
   expect(run("benchmark", "codex", "--request", path)).toMatchObject({
     code: 1, output: { status: "blocked", reason: expect.stringContaining("--allow-paid") },
   });
-  function comparable(alias: string) {
-    const { output, code } = run(alias, "codex", "--request", path, "--allow-paid");
-    return { code, command: output.command, agent: output.agent, status: output.status,
-      reason: output.reason, attempts: output.report?.attempts.map((attempt: {
-        mode: string; runtime: string; outcome: { status: string };
-      }) => ({ mode: attempt.mode, runtime: attempt.runtime, status: attempt.outcome.status })) };
-  }
-  const result = comparable("benchmark");
+});
+
+test("both aliases grade the same fixture pair and refuse fixture-only conformance", () => {
+  const path = benchmarkRequest("fixture");
+  const result = comparableBenchmark("benchmark", path);
   expect(result).toMatchObject({ code: 1, command: "benchmark", agent: "codex", status: "blocked", attempts: [
     { mode: "with_axiom", runtime: "fixture", status: "passed" },
     { mode: "without_axiom", runtime: "fixture", status: "passed" },
   ] });
-  expect(comparable("--benchmark")).toEqual(result);
-  writeFileSync(path, fixtureModule.replace('kind: "fixture"', 'kind: "isolated"').replace("host: request.host, ", ""));
-  expect(comparable("benchmark")).toMatchObject({ code: 1, status: "blocked", attempts: [
+  expect(comparableBenchmark("--benchmark", path)).toEqual(result);
+});
+
+test("blocks an isolated benchmark without observed host identity", () => {
+  const path = benchmarkRequest("isolated");
+  expect(comparableBenchmark("benchmark", path)).toMatchObject({ code: 1, status: "blocked", attempts: [
     { mode: "with_axiom", runtime: "isolated", status: "blocked" },
     { mode: "without_axiom", runtime: "isolated", status: "blocked" },
   ] });
