@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { digestSchema, evidenceSchema, policyIdentitySchema, sourceIdentitySchema, type EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { gradeCase, type GradingAction } from "@axiom/graders";
-import { reviewedCases, reviewedGrader, standardQualification, type BenchmarkArchive } from "./benchmark-archive.js";
+import { reviewedCases, reviewedGrader, standardQualification, summarizeBenchmarkResults, type BenchmarkArchive } from "./benchmark-archive.js";
 import { prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 // Preserve replay of archives produced before usage was made informational.
@@ -101,11 +101,15 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
       reviews.push({ id, assertions });
     }
     if (await requireCleanBenchmarkRevision(repository) !== revision) throw new Error("The review checkout changed.");
+    const results = summarizeBenchmarkResults(saved);
+    if (saved.results !== undefined && !isDeepStrictEqual(saved.results, results)) {
+      throw new Error("The archived benchmark summary differs from the recorded evidence.");
+    }
     const outcome: EvidenceOutcome = reviews.length && reviews.every((item) => Array.isArray(item.assertions))
       ? { status: "passed" } : { status: "blocked", reason: "At least one benchmark attempt lacks a grading observation." };
     return { outcome, report: {
       review: "evidence-replay", mode: saved.mode, provider: saved.provider, revision, benchmarkOutcome: saved.outcome,
-      baselineDigest: saved.baselineDigest, reviews,
+      baselineDigest: saved.baselineDigest, results, reviews,
       ...(saved.mode === "standard" && { qualification: saved.qualification, metering: saved.metering,
         ...("hardBudgetEnforcement" in saved && { hardBudgetEnforcement: saved.hardBudgetEnforcement }) }),
     } };

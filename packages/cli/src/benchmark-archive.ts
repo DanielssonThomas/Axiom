@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runBenchmark, type BenchmarkGrader, type BenchmarkOptions, type BenchmarkReport, type BenchmarkRuntime } from "@axiom/benchmark";
+import { runBenchmark, type BenchmarkAttempt, type BenchmarkGrader, type BenchmarkOptions, type BenchmarkReport, type BenchmarkRuntime } from "@axiom/benchmark";
 import { evaluationCaseSchema, type BenchmarkBackend, type EvaluationCase, type EvidenceOutcome, type Usage } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { gradeCase, type GradingAction } from "@axiom/graders";
@@ -41,7 +41,47 @@ export type BenchmarkArchive = Control & {
   outcome: EvidenceOutcome;
   report: BenchmarkReport;
   observations: Record<string, { location: string; digest: string }>;
+  results?: ReturnType<typeof summarizeBenchmarkResults>;
 };
+
+function armOutcome(attempts: readonly BenchmarkAttempt[]): EvidenceOutcome {
+  const results = attempts.map((attempt) => attempt.outcome);
+  return results.find(({ status }) => status === "failed")
+    ?? results.find(({ status }) => status === "blocked")
+    ?? results.find(({ status }) => status === "not_run")
+    ?? (results.length && results.every(({ status }) => status === "passed") ? { status: "passed" }
+      : { status: "blocked", reason: "A required arm result is missing or inapplicable." });
+}
+
+/** Preserve the original paired aggregate and give each arm and the experiment its own result. */
+export function summarizeBenchmarkResults({ report, observations, sourceFresh }:
+  Pick<BenchmarkArchive, "report" | "observations" | "sourceFresh">) {
+  const withAxiom = report.attempts.filter(({ mode }) => mode === "with_axiom");
+  const baseline = report.attempts.filter(({ mode }) => mode === "without_axiom");
+  const adjudicated = (status: EvidenceOutcome["status"]) => status === "passed" || status === "failed";
+  const complete = (attempt: BenchmarkAttempt) => attempt.execution?.outcome.status === "passed"
+    && !!observations[attempt.id] && adjudicated(attempt.outcome.status)
+    && attempt.assertions.every(({ required, evidenceId, outcome }) => !required ||
+      (!!evidenceId && adjudicated(outcome.status)));
+  const comparisons = withAxiom.map((attempt) => {
+    const { case: { id, version }, repetition } = attempt;
+    const paired = baseline.find((candidate) => candidate.case.id === id && candidate.case.version === version
+      && candidate.repetition === repetition);
+    const outcome = sourceFresh && paired && complete(attempt) && complete(paired)
+      ? attempt.outcome.status === paired.outcome.status ? "same" : attempt.outcome.status === "passed" ? "improved" : "regressed"
+      : "unavailable";
+    const timings = attempt.execution && paired?.execution &&
+      attempt.execution.outcome.status === "passed" && paired.execution.outcome.status === "passed"
+      ? { with_axiom: attempt.execution.durationMs, without_axiom: paired.execution.durationMs }
+      : undefined;
+    return { case: id, version, repetition, outcome, ...(timings && { durationMs: timings }) };
+  });
+  const execution: EvidenceOutcome = sourceFresh && comparisons.length > 0
+    && withAxiom.length === baseline.length && comparisons.every(({ outcome }) => outcome !== "unavailable")
+    ? { status: "passed" }
+    : { status: "blocked", reason: "At least one planned pair lacks fresh, complete execution and grading evidence." };
+  return { execution, behavior: { with_axiom: armOutcome(withAxiom), without_axiom: armOutcome(baseline) }, comparisons };
+}
 
 export class UnsupportedBenchmarkCase extends Error {}
 
@@ -181,6 +221,7 @@ export async function runArchivedBenchmark(archive: PreparedArchive, runtime: Ar
     : { status: "blocked" as const, reason: "The reviewed source changed during execution." };
   const result: BenchmarkArchive = { ...runtime.control, revision, sourceFresh, baselineRef, baselineDigest: baseline.digest,
     bundleDigest: runtime.bundleDigest, metering, outcome, report, observations };
+  result.results = summarizeBenchmarkResults(result);
   const bytes = JSON.stringify(result, null, 2) + "\n";
   await writeFile(join(evidenceDirectory, "benchmark.json"), bytes, { flag: "wx", mode: 0o600 });
   return { ...result, evidenceDirectory, evidenceDigest: sha256(bytes) };
