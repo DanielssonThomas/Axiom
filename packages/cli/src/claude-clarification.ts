@@ -17,7 +17,7 @@ export function supportsClaudeClarification(item: EvaluationCase): boolean {
     && required.every(({ grader }) => grader === "trace.clarify-before-edit");
 }
 
-export function claudeClarificationTopic(caseId: string) {
+export function clarificationTopic(caseId: string) {
   const rule = topics.get(caseId);
   if (rule === undefined) return;
   return (question: string) => {
@@ -33,7 +33,7 @@ export function claudeClarificationTopic(caseId: string) {
 
 export function admittedClaudeClarification(cases: readonly EvaluationCase[]) {
   const admitted = new Set(cases.filter(supportsClaudeClarification).map(({ id }) => id));
-  return (caseId: string) => admitted.has(caseId) ? claudeClarificationTopic(caseId) : undefined;
+  return (caseId: string) => admitted.has(caseId) ? clarificationTopic(caseId) : undefined;
 }
 
 export async function readClaudeClarification(store: EvidenceStore, execution: BackendResult, workspace: string,

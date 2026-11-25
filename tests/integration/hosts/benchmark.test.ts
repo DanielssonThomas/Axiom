@@ -10,7 +10,7 @@ import { reviewNativeBenchmark } from "../../../packages/cli/src/benchmark-revie
 import { defaultBenchmarkLimits, runTrustedClaude } from "../../../packages/cli/src/native-benchmark.js";
 import { benchmarkModel } from "../../../packages/cli/src/claude-provider.js";
 import { benchmarkRevision, prepareReviewedBaseline } from "../../../packages/cli/src/reviewed-baseline.js";
-import { admittedClaudeClarification, claudeClarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
+import { admittedClaudeClarification, clarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
 import { runStandardArchive } from "../../../packages/cli/src/standard-benchmark.js";
 import { runBenchmark } from "../../../packages/benchmark/src/index.js";
 import { EvidenceStore, snapshotSource } from "../../../packages/evidence/src/index.js";
@@ -180,8 +180,8 @@ test.runIf(executable && process.platform === "linux")("grades and replays paire
 
 
 test("requires a material output choice and a required canonical clarification assertion", () => {
-  const audience = claudeClarificationTopic("clarify-material-decision")!;
-  const format = claudeClarificationTopic("resolve-format-decision")!;
+  const audience = clarificationTopic("clarify-material-decision")!;
+  const format = clarificationTopic("resolve-format-decision")!;
   expect(audience("Which audience should receive the new summary?")).toBe("target audience");
   expect(audience("Which audience used the previous summary?")).toBeUndefined();
   expect(audience("Which audience should receive the weather alert?")).toBeUndefined();

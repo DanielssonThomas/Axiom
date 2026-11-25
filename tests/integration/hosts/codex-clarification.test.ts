@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
+import { evaluationCaseSchema } from "@axiom/contracts";
 import { expect, test } from "vitest";
 import { buildCodexBundle, configureCodexProfile, supportedVersion } from "../../../adapters/codex/src/index.js";
 import { nativeVersion, runCodex } from "../../../adapters/codex/src/process.js";
 import { loadBundleWorkspace } from "../../../packages/bundles/src/index.js";
+import { gradeCase } from "../../../evals/graders/index.js";
+import { codexClarificationActions } from "../../../packages/cli/src/codex-clarification.js";
 import { codexDigest } from "../../../packages/cli/src/native-install.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
 import { openLoopback } from "./loopback.js";
@@ -15,8 +18,6 @@ import { windowsCodexEnvironment, windowsCodexFixture, windowsSandbox } from "./
 const executable = process.env.AXIOM_TEST_CODEX_BINARY;
 const windows = process.platform === "win32";
 const model = "gpt-5.4";
-const prompt = "Inspect the disposable report format question fixture.";
-const fixture = "The report format is undecided.\n";
 const questions = [{ id: "format", header: "Format", question: "Which report format should I use?", options: [
   { label: "CSV", description: "Comma-delimited data" }, { label: "JSON", description: "JSON array" },
 ] }];
@@ -33,20 +34,28 @@ test.runIf(executable && (process.platform === "linux" || windows))(
   "installed Codex Plan-mode app-server waits for the matching native request-user-input response", async () => {
     const source = process.cwd();
     const revision = await snapshotSource({ root: source });
+    const evaluation = evaluationCaseSchema.parse(JSON.parse(await readFile(join(source, "evals/cases/resolve-format-decision.json"), "utf8")));
+    const prompt = windows ? "Inspect the disposable report format question fixture." : evaluation.prompt;
+    const fixtureName = windows ? "report.txt" : "issue.txt";
+    const fixture = windows ? "The report format is undecided.\n" : await readFile(join(source, evaluation.fixture, fixtureName), "utf8");
+    const askRequestCount = windows ? 1 : 2;
     const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-codex-app-clarify-")));
     const userHome = join(root, "user");
     const profile = { program: executable!, workspace: join(root, "fixture"), home: join(root, "codex"), userHome,
       ...(windows && { environment: windowsCodexEnvironment(userHome) }) };
-    const loopback = await openLoopback("codex", model, ({ text, toolResults }) =>
-      text.includes(prompt) && !toolResults.length ? { name: "request_user_input", arguments: JSON.stringify({ questions }) } : undefined,
-    );
+    const loopback = await openLoopback("codex", model, ({ text, toolResults }) => {
+      if (!text.includes(prompt)) return;
+      if (!windows && toolResults.length === 0) return { name: "exec_command", arguments: JSON.stringify({ cmd: "cat issue.txt" }) };
+      if (toolResults.length === askRequestCount - 1) return { name: "request_user_input", arguments: JSON.stringify({ questions }) };
+    });
     const stop = new AbortController();
     const signal = AbortSignal.any([stop.signal, AbortSignal.timeout(35_000)]);
     const events = new PassThrough({ objectMode: true });
+    const observations: RpcMessage[] = [];
     let native: ReturnType<typeof runCodex> | undefined;
     try {
       await Promise.all([mkdir(profile.home), mkdir(profile.userHome), mkdir(profile.workspace)]);
-      const project = join(profile.workspace, "report.txt");
+      const project = join(profile.workspace, fixtureName);
       await writeFile(project, fixture);
       await writeFile(join(profile.home, "config.toml"), [
         'model_provider = "fixture"', "[model_providers.fixture]", 'name = "Disposable fixture"',
@@ -66,7 +75,9 @@ test.runIf(executable && (process.platform === "linux" || windows))(
         onLine(line, write, end) {
           client = write;
           endInput = end;
-          events.write(JSON.parse(line));
+          const message: RpcMessage = JSON.parse(line);
+          observations.push(message);
+          events.write(message);
         },
       });
       void native.then(() => events.end(), (error) => events.destroy(error));
@@ -92,21 +103,28 @@ test.runIf(executable && (process.platform === "linux" || windows))(
       expect(turnId).toBeTruthy();
       const ask = await receive(({ method }) => method === "item/tool/requestUserInput" || method === "turn/completed");
       expect(ask).toMatchObject({ id: expect.any(Number), method: "item/tool/requestUserInput",
-        params: { threadId, turnId, itemId: "call_fixture_1", isBlocking: true, questions } });
-      expect(loopback.requests).toHaveLength(1);
+        params: { threadId, turnId, itemId: `call_fixture_${askRequestCount}`, isBlocking: true, questions } });
+      expect(loopback.requests).toHaveLength(askRequestCount);
       expect(loopback.requests[0]!.text.includes(bundle.instructions)).toBe(true);
 
       client!({ id: Number(ask.id) + 100, result: { answers: { format: { answers: ["CSV"] } } } });
       await delay(300, undefined, { signal });
-      expect(loopback.requests).toHaveLength(1);
+      expect(loopback.requests).toHaveLength(askRequestCount);
       expect(await readFile(project, "utf8")).toBe(fixture);
       client!({ id: ask.id, result: { answers: {} } });
       const terminal = await receive(({ method }) => method === "turn/completed");
       expect(terminal).toMatchObject({ params: { threadId, turn: { id: turnId, status: "completed" } } });
-      expect(loopback.requests).toHaveLength(2);
-      expect(loopback.requests[1]!.toolResults.map((result) => JSON.parse(result))).toEqual([{ answers: {} }]);
-      expect(await readFile(project, "utf8")).toBe(fixture);
-      expect(await readdir(profile.workspace)).toEqual(["report.txt"]);
+      expect(loopback.requests).toHaveLength(askRequestCount + 1);
+      expect(JSON.parse(loopback.requests.at(-1)!.toolResults.at(-1)!)).toEqual({ answers: {} });
+      const delivered = await readFile(project, "utf8");
+      expect(delivered).toBe(fixture);
+      expect(await readdir(profile.workspace)).toEqual([fixtureName]);
+      if (!windows) {
+        const actions = codexClarificationActions(observations, { workspace: profile.workspace, threadId: threadId!, turnId: turnId!, caseId: evaluation.id });
+        const evidence = { source: revision, policy: bundle.policy, before: new Map([[fixtureName, fixture]]), after: new Map([[fixtureName, delivered]]) };
+        expect(gradeCase(evaluation, { ...evidence, ...(actions && { actions }) })[0]?.outcome).toEqual({ status: "passed" });
+        expect(gradeCase(evaluation, { ...evidence, actions: actions!.filter(({ kind }) => kind !== "ask") })[0]?.outcome.status).toBe("failed");
+      }
       endInput!();
       expect((await native).code).toBe(0);
       expect(await snapshotSource({ root: source })).toEqual(revision);
