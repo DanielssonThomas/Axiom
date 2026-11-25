@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -114,6 +114,25 @@ function inside(root: string, path: string): boolean {
 
 const standardPermissions = "axiom-benchmark";
 
+async function stageGitMountPoint(workspace: string) {
+  const path = join(workspace, ".git");
+  try {
+    await mkdir(path, { mode: 0o700 });
+  } catch (error) {
+    // A caller's existing repository is never owned by the adapter.
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
+    throw error;
+  }
+  const original = await lstat(path, { bigint: true });
+  return async () => {
+    const current = await lstat(path, { bigint: true }).catch(() => undefined);
+    if (current?.isDirectory() && current.dev === original.dev && current.ino === original.ino) {
+      // rmdir preserves a populated mount for the fixture verifier to reject.
+      await rmdir(path).catch(() => {});
+    }
+  };
+}
+
 /** The npm launcher starts a platform binary that the native sandbox needs to be able to re-execute. */
 export async function resolveCodexAccountProgram(program: string): Promise<string> {
   const executable = await realpath(program);
@@ -185,6 +204,7 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
     const timed = AbortSignal.timeout(Math.min(request.timeoutMs, 2_147_483_647));
     const signal = AbortSignal.any([callerSignal, timed]);
     let scope: string | undefined;
+    let removeGitMount: (() => Promise<void>) | undefined;
     let host: typeof request.host | undefined;
     const artifacts: { kind: string; location: string; digest: string }[] = [];
     let usage: Usage = { metering: "unknown", reason: "Codex did not report validated token usage." };
@@ -219,6 +239,8 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       if (native !== request.host.version) return result({ status: "blocked", reason: "Installed Codex does not match the requested version." });
       host = { ...request.host, version: native };
       if (authHome) {
+        // Bubblewrap creates this mount on the host. Own its empty directory before Codex starts any sandbox.
+        removeGitMount = await stageGitMountPoint(workspace);
         const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal);
         if (unavailable) return result({ status: "blocked", reason: unavailable });
       }
@@ -261,6 +283,7 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       if (timed.aborted) return result({ status: "blocked", reason: "The native Codex attempt exceeded its time limit." });
       return result({ status: "blocked", reason: "The native Codex attempt could not be staged, executed, or recorded." });
     } finally {
+      await removeGitMount?.();
       if (scope) await rm(scope, { recursive: true, force: true });
     }
   } };

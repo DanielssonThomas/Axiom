@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -64,9 +64,15 @@ test.runIf(executable && process.platform === "linux")("keeps the native model r
 }, 15_000);
 
 test.runIf(Boolean(executable) && process.platform === "linux")(
-  "runs a paired native ChatGPT file profile against localhost with credential paths outside the tool sandbox", async () => {
+  "runs paired native account turns without leaving a terminated sandbox's Git mount behind", async () => {
     const root = await mkdtemp(join(tmpdir(), "axiom-codex-native-auth-"));
-    const loopback = await openLoopback("codex", "gpt-5.4");
+    const loopback = await openLoopback("codex", "gpt-5.4", ({ toolResults }) => {
+      if (toolResults.length > 0) return;
+      return { name: "exec_command", arguments: JSON.stringify({
+        cmd: "if (printf write > .git/guard-probe) 2>/dev/null; then exit 42; fi; printf delivered > tool-delivery.txt",
+        yield_time_ms: 1000,
+      }) };
+    });
     try {
       const workspace = join(root, "workspace");
       const authHome = join(root, "auth-profile");
@@ -86,8 +92,16 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
         'const overrides = [];',
         `if (args.includes("sandbox") || args.includes("exec")) overrides.push("-c", ${JSON.stringify(helper)});`,
         `overrides.push("-c", 'model_provider="fixture"', "-c", ${JSON.stringify(route)});`,
-        'const result = require("node:child_process").spawnSync(binary, [...overrides, ...args], { stdio: "inherit" });',
-        'process.exit(result.status ?? 1);',
+        'const { spawn, spawnSync } = require("node:child_process");',
+        'const result = spawnSync(binary, [...overrides, ...args], { stdio: "inherit" });',
+        'if (!args.includes("exec") || result.status !== 0) process.exit(result.status ?? 1);',
+        // Stop a pinned native sandbox while the protected mount exists, after a complete turn receipt.
+        'const sandbox = spawn(binary, [...overrides, "sandbox", "-P", "axiom-benchmark", "--include-managed-config",',
+        '  "-C", process.cwd(), "--", "/bin/sh", "-c", "echo ready; exec sleep 15"],',
+        '  { detached: true, stdio: ["ignore", "pipe", "ignore"] });',
+        'let ready = false;',
+        'sandbox.stdout.once("data", () => { ready = true; process.kill(-sandbox.pid, "SIGKILL"); });',
+        'sandbox.once("close", (_code, signal) => process.exit(ready && signal === "SIGKILL" ? 0 : 1));',
       ].join("\n"), { mode: 0o700 });
       const source = process.cwd();
       const core = { path: "core/AXIOMS.md", version: "1", text: await readFile(join(source, "core/AXIOMS.md"), "utf8") };
@@ -114,11 +128,22 @@ test.runIf(Boolean(executable) && process.platform === "linux")(
       const baseline = await run("without_axiom");
       expect(baseline, JSON.stringify({ outcome: baseline.outcome, requests: loopback.requests.length }))
         .toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
+      expect(await readFile(join(workspace, "tool-delivery.txt"), "utf8")).toBe("delivered");
+      await expect(lstat(join(workspace, ".git"))).rejects.toMatchObject({ code: "ENOENT" });
       const installed = await run("with_axiom");
       expect(installed, JSON.stringify(installed.outcome)).toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
-      expect(loopback.requests.map(({ text }) => text.includes(bundle.policy.digest))).toEqual([false, true]);
+      await expect(lstat(join(workspace, ".git"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(loopback.requests.filter(({ toolResults }) => toolResults.length === 0)
+        .map(({ text }) => text.includes(bundle.policy.digest))).toEqual([false, true]);
       expect(loopback.requests.every(({ text }) => !text.includes(canary) && !text.includes(jwt))).toBe(true);
       expect(await readFile(auth, "utf8")).toBe(dummy);
+
+      const existingGit = join(workspace, ".git");
+      await mkdir(existingGit);
+      await writeFile(join(existingGit, "marker"), "pre-existing metadata");
+      expect(await run("without_axiom")).toMatchObject({ outcome: { status: "passed" } });
+      expect(await readFile(join(existingGit, "marker"), "utf8")).toBe("pre-existing metadata");
+      await expect(lstat(join(existingGit, "guard-probe"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await loopback.close();
       await rm(root, { recursive: true, force: true });
