@@ -12,6 +12,13 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
   ? value as Record<string, unknown> : {};
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
+export function visibleHermesQuestionMark(finalOutput: unknown, events: readonly Record<string, unknown>[]) {
+  const hasQuestionMark = (text: unknown) => typeof text === "string" && /[?？]/u.test(text);
+  return hasQuestionMark(finalOutput) || events.some((event) =>
+    (event.event === "message.delta" && hasQuestionMark(event.delta)) ||
+    (event.event === "message.interim" && hasQuestionMark(event.text)));
+}
+
 export async function localHermesPort() {
   const listener = createServer();
   await new Promise<void>((resolve, reject) => listener.once("error", reject).listen(0, "127.0.0.1", resolve));
@@ -84,7 +91,7 @@ export async function runHermesClarification(launch: Launch, directory: string, 
     const route = `/v1/runs/${run}`;
     const answered = new Map<string, Prompt>();
     let admission: string | undefined;
-    let assistantMessageHasQuestionMark = false;
+    let finalOutput: unknown;
     while (true) {
       const state = record(await (await json(route)).json());
       if (state.run_id !== run || state.session_id !== session) return;
@@ -96,7 +103,7 @@ export async function runHermesClarification(launch: Launch, directory: string, 
         const runtime = record(state.runtime);
         if (state.status !== "completed" || !admission || (runtime.model && runtime.model !== request.host.model) ||
             (runtime.provider && runtime.provider !== provider)) return;
-        assistantMessageHasQuestionMark = typeof state.output === "string" && /[?？]/u.test(state.output);
+        finalOutput = state.output;
         break;
       }
       if (Array.isArray(state.pending_controls) && state.pending_controls.length) {
@@ -125,7 +132,8 @@ export async function runHermesClarification(launch: Launch, directory: string, 
     const models = receipts.filter(({ kind }) => kind === "served-model");
     if (models.length !== 1 || models[0]?.model !== request.host.model) return;
     const actions = observations(events, receipts.filter(({ kind }) => kind !== "served-model"), answered, classify);
-    if (actions) return { actions, blockingControls: answered.size, settledBlockingControls: answered.size, assistantMessageHasQuestionMark };
+    if (actions) return { actions, blockingControls: answered.size, settledBlockingControls: answered.size,
+      assistantMessageHasQuestionMark: visibleHermesQuestionMark(finalOutput, events) };
   } finally {
     await gateway.stop();
   }

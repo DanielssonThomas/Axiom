@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { backendResultSchema } from "@axiom/contracts";
 import { HermesBenchmarkBackend } from "../../../adapters/hermes/src/index.js";
+import { visibleHermesQuestionMark } from "../../../adapters/hermes/src/clarification.js";
+
+test("reports question punctuation from visible Hermes messages only", () => {
+  expect(visibleHermesQuestionMark("Done.", [{ event: "message.interim", text: "Which format?" }])).toBe(true);
+  expect(visibleHermesQuestionMark("Done.", [{ event: "message.delta", delta: "？" }])).toBe(true);
+  expect(visibleHermesQuestionMark("Done.", [{ event: "reasoning.available", text: "Which format?" }])).toBe(false);
+  expect(visibleHermesQuestionMark("Which format?", [])).toBe(true);
+});
 
 const workspaces: string[] = [];
 afterEach(() => {
