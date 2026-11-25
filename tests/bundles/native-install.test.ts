@@ -107,18 +107,20 @@ test("rejects an altered Codex distribution before touching the selected profile
 }, 20_000);
 
 test.runIf(Boolean(process.env.AXIOM_TEST_CLAUDE_BINARY) && process.platform === "linux")(
-  "installs and updates the staged Claude marketplace with native commands and keeps unrelated settings", async () => {
+  "installs, updates and rolls back the staged Claude marketplace while preserving unrelated settings", async () => {
     const { output, repository, root, env, run, report, runNativeBundle } = await nativeFixture();
     const program = process.env.AXIOM_TEST_CLAUDE_BINARY!;
     mkdirSync(env.CLAUDE_CONFIG_DIR);
     const settings = join(env.CLAUDE_CONFIG_DIR, "settings.json");
     writeFileSync(settings, '{"env":{"AXIOM_TEST_UNRELATED":"keep"}}\n');
+    const installed = () => JSON.parse(run(program, ["plugin", "list", "--json"]))
+      .find(({ id }: { id: string }) => id === "axiom@axiom-local");
     expect(run(program, ["--version"])).toContain(report.hosts.claude.hostVersion);
     run(program, ["plugin", "marketplace", "add", join(output, "claude")]);
     run(program, ["plugin", "install", "axiom@axiom-local", "--scope", "local"]);
-    expect(JSON.parse(run(program, ["plugin", "list", "--json"]))).toContainEqual(expect.objectContaining({
-      id: "axiom@axiom-local", version: "0.2.5", scope: "local", enabled: true,
-    }));
+    expect(installed()).toMatchObject({ version: "0.2.5", scope: "local", enabled: true });
+    const previous = installed().installPath;
+    const previousManifest = readFileSync(join(previous, ".claude-plugin", "plugin.json"));
     const update = join(root, "updated");
     expect((await runNativeBundle({ repository, output: update, version: "0.2.6" })).outcome).toEqual({ status: "passed" });
     const marketplace = join(output, "claude");
@@ -126,9 +128,14 @@ test.runIf(Boolean(process.env.AXIOM_TEST_CLAUDE_BINARY) && process.platform ===
     cpSync(join(update, "claude"), marketplace, { recursive: true });
     run(program, ["plugin", "marketplace", "update", "axiom-local"]);
     run(program, ["plugin", "update", "axiom@axiom-local", "--scope", "local"]);
-    expect(JSON.parse(run(program, ["plugin", "list", "--json"]))).toContainEqual(expect.objectContaining({
-      id: "axiom@axiom-local", version: "0.2.6", scope: "local", enabled: true,
-    }));
+    expect(installed()).toMatchObject({ version: "0.2.6", scope: "local", enabled: true });
+    renameSync(marketplace, join(root, "newer-claude"));
+    renameSync(join(root, "previous-claude"), marketplace);
+    run(program, ["plugin", "marketplace", "update", "axiom-local"]);
+    run(program, ["plugin", "update", "axiom@axiom-local", "--scope", "local"]);
+    expect(installed()).toMatchObject({ version: "0.2.5", scope: "local", enabled: true, installPath: previous });
+    expect(readFileSync(join(previous, ".claude-plugin", "plugin.json"))).toEqual(previousManifest);
+    expect(JSON.parse(readFileSync(settings, "utf8"))).toMatchObject({ env: { AXIOM_TEST_UNRELATED: "keep" } });
     run(program, ["plugin", "disable", "axiom@axiom-local", "--scope", "local"]);
     run(program, ["plugin", "uninstall", "axiom@axiom-local", "--scope", "local"]);
     expect(JSON.parse(readFileSync(settings, "utf8"))).toMatchObject({ env: { AXIOM_TEST_UNRELATED: "keep" } });
@@ -136,7 +143,7 @@ test.runIf(Boolean(process.env.AXIOM_TEST_CLAUDE_BINARY) && process.platform ===
 );
 
 test.runIf(Boolean(process.env.AXIOM_TEST_CODEX_BINARY) && process.platform === "linux")(
-  "installs the staged Codex plugin and observes the owned policy bridge", async () => {
+  "rolls back the staged Codex plugin and observes its original policy bridge", async () => {
     const { runCodexLifecycle } = await import("../../packages/cli/src/native-install.js");
     const { output, repository, root, home, env, run, report, runNativeBundle } = await nativeFixture();
     const program = process.env.AXIOM_TEST_CODEX_BINARY!;
@@ -156,6 +163,12 @@ test.runIf(Boolean(process.env.AXIOM_TEST_CODEX_BINARY) && process.platform === 
     expect(update.outcome).toEqual({ status: "passed" });
     expect((await runCodexLifecycle({ ...target, distribution, action: "update" })).outcome).toEqual({ status: "passed" });
     expect(run(program, ["debug", "prompt-input"])).toContain(update.report!.policy.digest);
+    const rollback = await runCodexLifecycle({ ...target, action: "update" });
+    expect(rollback).toMatchObject({ outcome: { status: "passed" }, report: { version: "0.2.5" } });
+    const restored = run(program, ["debug", "prompt-input"]);
+    expect(restored).toContain(report.policy.digest);
+    expect(restored).toContain(original.trim());
+    expect(restored).not.toContain(update.report!.policy.digest);
     expect((await runCodexLifecycle({ ...target, action: "disable" })).outcome).toEqual({ status: "passed" });
     expect(readFileSync(instructions, "utf8")).toBe(original);
     expect((await runCodexLifecycle({ ...target, action: "uninstall" })).outcome).toEqual({ status: "passed" });
@@ -164,8 +177,8 @@ test.runIf(Boolean(process.env.AXIOM_TEST_CODEX_BINARY) && process.platform === 
 );
 
 test.runIf(Boolean(process.env.AXIOM_HERMES_CLI) && process.platform === "linux")(
-  "installs and updates the staged Hermes Git artifact at an exact commit", async () => {
-    const { output, repository, root, run, report, runNativeBundle } = await nativeFixture();
+  "installs, updates and rolls back the staged Hermes Git artifact at exact commits", async () => {
+    const { output, repository, root, env, run, report, runNativeBundle } = await nativeFixture();
     const program = process.env.AXIOM_HERMES_CLI!;
     expect(run(program, ["--version"])).toContain(report.hosts.hermes.hostVersion);
     run(program, ["profile", "create", "qualification", "--no-alias", "--no-credentials"]);
@@ -185,7 +198,17 @@ test.runIf(Boolean(process.env.AXIOM_HERMES_CLI) && process.platform === "linux"
     expect(JSON.parse(native("list", "--user", "--json"))).toContainEqual(expect.objectContaining({
       name: "axiom", version: "0.2.6", status: "enabled",
     }));
+    const profile = join(env.HERMES_HOME, "profiles", "qualification");
+    const soul = join(profile, "SOUL.md");
+    writeFileSync(soul, "Preserve this unrelated profile instruction.\n");
+    native("install", report.hermesUrl, "--force", "--ref", report.hosts.hermes.commit, "--enable");
+    expect(JSON.parse(native("list", "--user", "--json"))).toContainEqual(expect.objectContaining({
+      name: "axiom", version: "0.2.5", status: "enabled",
+    }));
+    const installedBundle = JSON.parse(readFileSync(join(profile, "plugins", "axiom", "axiom-bundle.json"), "utf8"));
+    expect(installedBundle.digest).toBe(report.hosts.hermes.digest);
+    expect(readFileSync(soul, "utf8")).toBe("Preserve this unrelated profile instruction.\n");
     native("remove", "axiom");
     expect(JSON.parse(native("list", "--user", "--json"))).not.toContainEqual(expect.objectContaining({ name: "axiom" }));
-  }, 90_000,
+  }, 120_000,
 );
