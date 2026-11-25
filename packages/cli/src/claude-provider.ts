@@ -1,5 +1,6 @@
 import { chmod } from "node:fs/promises";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Usage } from "@axiom/contracts";
 
@@ -127,21 +128,28 @@ export async function openClaudeProvider(socketPath: string, upstream: MessagesT
       body = admit(JSON.parse(Buffer.concat(parts).toString("utf8")));
     } catch { return reject(400); }
     if (!body) return reject(403);
+    if (response.destroyed) return;
     if (deadline.aborted || busy) return reject(429);
     busy = true;
     submitted++;
     if ((body.tools as unknown[] | undefined)?.some((tool) => !localToolNames.has(String(object(tool).name)))) {
       unfamiliarTools++;
     }
+    const client = new AbortController();
+    const disconnect = () => { if (!response.writableFinished) client.abort(); };
+    response.once("close", disconnect);
+    const callSignal = AbortSignal.any([deadline, client.signal]);
     try {
-      const reply = await upstream(body, deadline);
+      const reply = await upstream(body, callSignal);
       if (!reply.ok || !reply.body || !reply.headers.get("content-type")?.startsWith("text/event-stream")) {
         await reply.body?.cancel();
         throw new Error("No provider stream.");
       }
       const usage = providerUsage();
       response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
-      await pipeline(usage.stream(reply.body), response, { signal: deadline });
+      // The Fetch and Node stream types differ on BYOB readers. This pipeline reads bytes with the default reader.
+      const source = Readable.fromWeb(reply.body as Parameters<typeof Readable.fromWeb>[0], { signal: callSignal });
+      await pipeline(source, (input) => usage.stream(input), response, { signal: callSignal });
       const actual = usage.read();
       if (actual) {
         inputTokens += actual.input;
@@ -151,6 +159,7 @@ export async function openClaudeProvider(socketPath: string, upstream: MessagesT
       unmeasured++;
       if (!response.headersSent && !response.destroyed) reject(502);
     } finally {
+      response.off("close", disconnect);
       busy = false;
     }
   });

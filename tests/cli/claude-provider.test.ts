@@ -104,3 +104,36 @@ test.runIf(process.platform === "linux")("cancels an in-flight provider call and
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test.runIf(process.platform === "linux")("cancels an abandoned provider stream and accepts the next call", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "axiom-provider-"));
+  const cancel = vi.fn();
+  const upstream = vi.fn<MessagesTransport>(async () => completion(10, 2)).mockResolvedValueOnce(new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(Buffer.from('data: {"type":"ping"}\n\n')); },
+      cancel,
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  ));
+  const provider = await openClaudeProvider(join(folder, "model.sock"), upstream);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const outgoing = request({ socketPath: provider.socketPath, path: "/v1/messages", method: "POST" }, (incoming) => {
+        incoming.once("data", () => {
+          incoming.destroy();
+          resolve();
+        });
+        incoming.on("error", reject);
+      });
+      outgoing.on("error", reject);
+      outgoing.end(JSON.stringify({ model: benchmarkModel, messages: [], stream: true, max_tokens: 1_000 }));
+    });
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalled(), { timeout: 1_000 });
+    expect(upstream.mock.calls[0]?.[1].aborted).toBe(true);
+    await vi.waitFor(async () => expect(await send(provider.socketPath, {})).toBe(200));
+    expect(provider.usage()).toMatchObject({ metering: "unknown" });
+  } finally {
+    await provider.close();
+    await rm(folder, { recursive: true, force: true });
+  }
+});
