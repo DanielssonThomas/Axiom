@@ -217,6 +217,8 @@ Record individually observed critical violations, including premature dependent 
 
 ### Issue #19 criterion status
 
+The pinned Linux distribution tests exercise rollback from a newer fixture artifact to the reviewed earlier artifact using the native Claude marketplace, Codex lifecycle, and Hermes Git install routes. They check restored artifact or runtime identity and preservation of unrelated settings. Release-specific rollback remains part of [#20](https://github.com/DanielssonThomas/Axiom/issues/20).
+
 | Criterion | Current disposition | Smallest outstanding evidence or action |
 | --- | --- | --- |
 | Final bundles installed in clean ordinary sessions | Scoped scripted-provider evidence exists for all three hosts. Final ordinary real-model coverage is incomplete. | Capture ordinary sessions on the reviewed final artifacts with the required host configurations. |
