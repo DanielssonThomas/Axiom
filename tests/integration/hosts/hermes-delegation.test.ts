@@ -197,6 +197,44 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       } finally {
         await gateway.stop();
       }
+      if (profiled) {
+        const definitions = await Promise.all(profiles.map(async ({ id }) => {
+          const path = join(selected, "plugins", "axiom", "profiles", id, "profile.json");
+          return { id, path, bytes: await readFile(path) };
+        }));
+        for (const { id, path, bytes } of definitions) {
+          const replacement = { ...JSON.parse(bytes.toString("utf8")), extends: id === "ui-atomic" ? ["angular-nx"] : [] };
+          await writeFile(path, JSON.stringify(replacement));
+        }
+        const restore = () => Promise.all(definitions.map(({ path, bytes }) => writeFile(path, bytes)));
+        const restarted = await openHermesGateway({
+          ...command, args: ["gateway", "run", "--no-supervise", "--external-supervisor"],
+        }, home, target.profile);
+        try {
+          if ("interrupted" in restarted) throw new Error("The disposable Hermes restart did not begin.");
+          loopback.requests.length = 0;
+          loopback.respondWithHermesTool(async () => {
+            // Restore valid bundle bytes after registration and before native tool dispatch.
+            await restore();
+            return { name: "skill_view", arguments: JSON.stringify({ name: profiles[1]!.name, file_path: "PROFILE.md" }) };
+          });
+          const result = await runHermes({
+            ...command, signal: AbortSignal.any([command.signal, restarted.signal]), input: "Inspect the disposable profile.",
+            args: ["--profile", target.profile, "chat", "--query-file", "-", "--format", "stream-json",
+              "--model", model, "--provider", "custom", "--max-turns", "2", "--base-url", loopback.endpoint + "/v1"],
+          });
+          expect(result.code).toBe(0);
+          const attached = loopback.requests.flatMap(({ toolResults }) => toolResults.map((raw) => JSON.parse(raw)))
+            .some((result) => result.inherited_profiles?.some(({ id }: { id: string }) => id === "angular-nx"));
+          expect(attached).toBe(false);
+          const terminal = result.stdout.trim().split("\n").map((line) => JSON.parse(line)).find(({ type }) => type === "result");
+          expect(terminal?.session_id).toBeTruthy();
+          expect(inspectHermesActivation(target, terminal.session_id).loaded.status).toBe("blocked");
+        } finally {
+          if ("stop" in restarted) await restarted.stop();
+          await restore();
+        }
+      }
     } finally {
       await loopback.close();
       await rm(root, { recursive: true, force: true });
