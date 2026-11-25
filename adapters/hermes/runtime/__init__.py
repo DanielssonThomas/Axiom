@@ -123,7 +123,7 @@ def _contains_policy(system, frames):
     return bool(frames) and any(all(frame in content for frame in frames) for content in system)
 
 
-def _profile_reads(messages, skills):
+def _profile_reads(messages, skills, inherits):
     """Match exact native profile reads to their tool results in the same provider request."""
     pending = {}
     observed = {}
@@ -154,13 +154,20 @@ def _profile_reads(messages, skills):
                 result = json.loads(_text(message.get("content", message.get("output"))))
                 if (isinstance(result, dict) and result.get("success") is True and result.get("name") == name
                         and result.get("file") == "PROFILE.md" and isinstance(result.get("content"), str)):
-                    observed[skills[name]] = _digest(result["content"].encode("utf-8"))
+                    profile = skills[name]
+                    observed[profile] = _digest(result["content"].encode("utf-8"))
+                    inherited = result.get("inherited_profiles", [])
+                    if isinstance(inherited, list):
+                        for entry in inherited:
+                            if (isinstance(entry, dict) and entry.get("id") in inherits[profile]
+                                    and isinstance(entry.get("content"), str)):
+                                observed[entry["id"]] = _digest(entry["content"].encode("utf-8"))
             except (KeyError, TypeError, ValueError):
                 continue
     return [{"id": profile_id, "digest": digest} for profile_id, digest in sorted(observed.items())]
 
 
-def _observe_request(folder, identity, instance, frames, fingerprints, profile_skills):
+def _observe_request(folder, identity, instance, frames, fingerprints, profile_skills, inherits):
     def observe(request, session_id="", **_kwargs):
         if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
             return
@@ -173,7 +180,7 @@ def _observe_request(folder, identity, instance, frames, fingerprints, profile_s
             "session": session_id,
             "mechanism": "llm_request",
             "sections": fingerprints if covered else [],
-            "profiles": _profile_reads(messages, profile_skills) if covered and profile_skills else [],
+            "profiles": _profile_reads(messages, profile_skills, inherits) if covered and profile_skills else [],
         })
 
     return observe
@@ -193,7 +200,7 @@ def _worker_brief_digest(messages):
     return _digest(contexts[0].encode("utf-8")) if len(contexts) == 1 else None
 
 
-def _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, profile_fingerprints):
+def _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, inherits, profile_fingerprints):
     pending = {}
 
     def started(parent_session_id=None, child_session_id=None, child_subagent_id=None, **_kwargs):
@@ -227,7 +234,7 @@ def _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_sk
             observation.update(mechanism="first_llm_execution", inspectable=content is not None,
                                coreLoaded=core_loaded, briefDigest=_worker_brief_digest(messages))
         elif core_loaded:
-            observation.update(mechanism="subsequent_llm_execution", profiles=_profile_reads(messages, profile_skills))
+            observation.update(mechanism="subsequent_llm_execution", profiles=_profile_reads(messages, profile_skills, inherits))
         # Only a successful provider execution can establish each observation.
         response = next_call()
         if first:
@@ -266,12 +273,57 @@ def _profile_index(ctx, bundle, manifest):
         return skills, ""
     index = [
         "## Selected Axiom profile references",
-        "Before planning or acting on work covered by a selected profile, use the listed Hermes skill_view calls "
-        "to retrieve and apply its complete canonical requirements and any inherited profile requirements. "
+        "Before planning or acting on work covered by a selected profile, use its listed Hermes skill_view call. "
+        "A profile read includes its inherited requirements. Apply them together and load any other applicable profile. "
         "If applicable requirements cannot be retrieved, report their verification as blocked.",
         *(f'- skill_view(name="{name}", file_path="PROFILE.md")' for name in skills),
     ]
     return skills, "\n\n".join(index)
+
+
+def _inherited_profiles(bundle, profile_ids):
+    extends = {
+        name: json.loads((bundle / "profiles" / name / "profile.json").read_text(encoding="utf-8"))["extends"]
+        for name in profile_ids
+    }
+    inherited = {}
+    for name in extends:
+        parents = set()
+        pending = list(extends[name])
+        while pending:
+            parent = pending.pop()
+            if parent not in parents:
+                parents.add(parent)
+                pending.extend(extends[parent])
+        inherited[name] = sorted(parents)
+    return inherited
+
+
+def _include_inherited_profiles(bundle, skills, inherits, files):
+    def include(tool_name, args, result, **_kwargs):
+        if tool_name != "skill_view" or args.get("file_path") != "PROFILE.md" or not isinstance(result, str):
+            return
+        name = args.get("name")
+        profile = skills.get(name) if isinstance(name, str) else None
+        if profile is None or not inherits[profile]:
+            return
+        try:
+            response = json.loads(result)
+            if not (isinstance(response, dict) and response.get("success") is True and response.get("name") == name
+                    and response.get("file") == "PROFILE.md" and isinstance(response.get("content"), str)
+                    and _digest(response["content"].encode("utf-8")) == files[f"profiles/{profile}/PROFILE.md"]):
+                return
+            parents = []
+            for parent in inherits[profile]:
+                relative = f"profiles/{parent}/PROFILE.md"
+                content = (bundle / relative).read_bytes()
+                if _digest(content) != files[relative]:
+                    return
+                parents.append({"id": parent, "content": content.decode("utf-8")})
+            return json.dumps({**response, "inherited_profiles": parents}, ensure_ascii=False)
+        except (OSError, KeyError, TypeError, ValueError):
+            return
+    return include
 
 
 def _split_sections(content):
@@ -306,11 +358,15 @@ def register(ctx):
         ctx.register_skill(name, entrypoint, description=_description(entrypoint))
 
     profile_skills, index = _profile_index(ctx, bundle, manifest)
+    inherits = _inherited_profiles(bundle, profile_skills.values())
     files = {record["path"]: record["digest"] for record in manifest["files"]}
     profile_fingerprints = [{"id": profile_id, "digest": files[f"profiles/{profile_id}/PROFILE.md"]}
                             for profile_id in sorted(profile_skills.values())]
     core = (bundle / "core" / "AXIOMS.md").read_text(encoding="utf-8").rstrip("\n")
     parts = [f"Axiom policy digest {manifest['policy']['digest']}", core]
+    if any(skill["id"] == "delegate" for skill in manifest["skills"]):
+        parts.append("Before calling delegate_task, read the authoritative task and open the axiom:delegate skill. "
+                     "Carry the full worker brief in each task's context.")
     if index:
         parts.append(index)
     sections = _split_sections("\n\n".join(parts))
@@ -331,7 +387,9 @@ def register(ctx):
             observation["sections"].append(
                 {"id": key, "digest": _digest(section.encode("utf-8"))})
     ctx.register_hook("pre_tool_call", _hook(bundle, folder, identity, instance, checker_digest))
+    if any(inherits.values()):
+        ctx.register_hook("transform_tool_result", _include_inherited_profiles(bundle, profile_skills, inherits, files))
     ctx.register_middleware("llm_request",
-                            _observe_request(folder, identity, instance, frames, observation["sections"], profile_skills))
-    _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, profile_fingerprints)
+                            _observe_request(folder, identity, instance, frames, observation["sections"], profile_skills, inherits))
+    _observe_worker_delivery(ctx, folder, identity, instance, frames, profile_skills, inherits, profile_fingerprints)
     _report(folder, "registered.json", observation)

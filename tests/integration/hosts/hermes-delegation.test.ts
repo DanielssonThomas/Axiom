@@ -131,9 +131,9 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           for (const skill of skills) expect(childRequests[0]?.text).toContain(`axiom:${skill}`);
           if (!profiled) {
             const launch = loopback.requests.find(({ userMessages }) => userMessages.includes(parentPrompt));
-            expect(launch?.systemMessages.join("\n")).toContain(
+            expect(launch?.systemMessages.some((message) => message.includes(
               "Before calling delegate_task, read the authoritative task and open the axiom:delegate skill.",
-            );
+            ))).toBe(true);
           }
           expect(childRequests[0]?.text.includes(formatted)).toBe(includeBrief);
           for (const profile of profiles) {
