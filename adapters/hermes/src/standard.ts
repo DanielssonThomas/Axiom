@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BenchmarkBackend, EvidenceOutcome } from "@axiom/contracts";
 import { HermesBenchmarkBackend } from "./backend.js";
+import { runHermesClarification } from "./clarification.js";
 import { changeHermesPlugin, profileDirectory } from "./profile.js";
 import { runHermes } from "./process.js";
 import { hermesVersion } from "./bundle.js";
@@ -15,6 +16,7 @@ interface AccountBackendOptions {
   bundle: string;
   /** Observe the effective restricted toolsets for this reviewed case. */
   previewCaseId?: string;
+  clarification?: (caseId: string) => ((question: string) => string | undefined) | undefined;
   /** Credential-free native loopback tests only. The user command never supplies this. */
   loopback?: string;
 }
@@ -27,9 +29,11 @@ const unmetered = { metering: "unknown", reason: "Hermes account execution did n
 export function createHermesAccountBackend(options: AccountBackendOptions): BenchmarkBackend {
   return { async run(request, signal) {
     const started = performance.now();
+    const clarify = request.host.surface === "gateway-runs" ? options.clarification?.(request.caseId) : undefined;
     const blocked = (reason: string) => ({ requestId: request.id, durationMs: performance.now() - started,
       outcome: { status: "blocked", reason } as EvidenceOutcome, artifacts: [], usage: unmetered });
-    if (signal.aborted || request.host.os !== "linux" || request.host.version !== hermesVersion ||
+    if (signal.aborted || request.host.agent !== "hermes" || request.host.os !== "linux" || request.host.version !== hermesVersion ||
+        (request.host.surface !== "cli" && !clarify) ||
         !isAbsolute(options.authHome) || !isAbsolute(options.executable)) return blocked("Hermes account execution requires the pinned Linux CLI and an absolute auth root.");
     const home = await realpath(options.authHome).catch(() => undefined);
     if (!home || !await lstat(join(home, "auth.json")).then((item) => item.isFile(), () => false)) {
@@ -56,12 +60,17 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       // A cancelled create may have reached the filesystem. Clean up only the generated name.
       directory = (() => { try { return profileDirectory({ home, profile }); } catch { return undefined; } })();
       if (created.code !== 0 || !directory) return blocked("The disposable Hermes profile could not be created.");
+      const observation = clarify ? join(directory, "clarification-tools.jsonl") : undefined;
+      if (observation) await writeFile(observation, "", { flag: "wx", mode: 0o600 });
       await writeFile(join(directory, "config.yaml"), JSON.stringify({
         _config_version: 54, gateway: { standalone: true }, hooks_auto_accept: true,
         // The native launch guard checks the named profile's configuration before resolving the default OAuth login.
         model: { provider: selectedProvider, default: request.host.model },
-        ...(request.caseId === options.previewCaseId ? { platform_toolsets: { cli: accountToolsets } } : {}),
-        hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace].map((part) => JSON.stringify(part)).join(" "),
+        ...(clarify ? { platform_toolsets: { api_server: [...accountToolsets, "clarify"] },
+          auxiliary: { title_generation: { enabled: false } }, kanban: { dispatch_in_gateway: false } }
+          : request.caseId === options.previewCaseId ? { platform_toolsets: { cli: accountToolsets } } : {}),
+        hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace, ...(observation ? [observation] : [])]
+          .map((part) => JSON.stringify(part)).join(" "),
           timeout: 5, fail_closed: true }] },
       }), { mode: 0o600 });
       const auth = await runHermes({ ...command, args: ["--profile", profile, "auth", "status", provider] });
@@ -72,6 +81,18 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
         return blocked("The disposable Hermes profile could not install the Axiom bundle.");
       }
       if (signal.aborted || remaining() < 1) return blocked("Hermes account execution was cancelled or exhausted its time limit.");
+      if (clarify && observation) {
+        const actions = await runHermesClarification({ ...command, args: ["--profile", profile, "gateway", "run",
+          "--no-supervise", "--external-supervisor"] }, directory, profile, request, selectedProvider, observation, clarify);
+        if (!actions) return blocked("The Hermes gateway did not return a complete native clarification observation.");
+        const location = `${request.id}.clarification.json`;
+        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, actions }) + "\n";
+        await writeFile(join(options.archiveDirectory, location), body, { flag: "wx", mode: 0o600 });
+        return { requestId: request.id, host: request.host, durationMs: performance.now() - started,
+          outcome: { status: "passed" as const }, usage: unmetered, artifacts: [{
+            kind: "native-clarification", location, digest: "sha256:" + createHash("sha256").update(body).digest("hex"),
+          }] };
+      }
       const backend = new HermesBenchmarkBackend({
         executable: options.executable, profile: { home, profile }, archiveDirectory: options.archiveDirectory,
         provider: selectedProvider, maxTurns: 8, standalone: true, toolsets: accountToolsets, environment: env,

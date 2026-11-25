@@ -14,7 +14,7 @@ import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, write
 
 import { isSupportedBenchmarkLimits, prepareBenchmarkArchive, runArchivedBenchmark, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { nativeProgram } from "./native-program.js";
-import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
+import { admittedClarification, readClaudeClarification, supportsClarification } from "./claude-clarification.js";
 import { isUnavailablePreview, recordUnavailablePreview } from "./preview-observation.js";
 
 const exec = promisify(execFile);
@@ -28,7 +28,7 @@ const observableGraders = new Set(["artifact.existing-formatter", "artifact.comm
 
 
 export function supportsStrictBenchmarkCase(item: EvaluationCase) {
-  return supportsClaudeClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
+  return supportsClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
     (isUnavailablePreview(item) && grader === unavailablePreviewCase.grader)) &&
     item.requiredCapabilities.every((id) => id === "action-trace"));
 }
@@ -93,7 +93,7 @@ export async function runTrustedClaude(
     const provider = await openClaudeProvider(join(temporary, "provider.sock"), upstream, cancellation);
     const backend = createClaudeBackend({
       program, artifacts: evidenceDirectory, bundle, installNative: true,
-      tools: [...benchmarkTools], clarification: admittedClaudeClarification(archive.cases),
+      tools: [...benchmarkTools], clarification: admittedClarification(archive.cases),
       environment: { ANTHROPIC_API_KEY: "axiom-loopback" },
       launch: launchClaudeSandbox(provider.socketPath, bundle.directory),
     });
@@ -120,7 +120,7 @@ export async function runTrustedClaude(
           const id = execution.requestId;
           const workspace = workspaces.get(id);
           if (workspace === undefined) return;
-          if (supportsClaudeClarification(evaluation)) return readClaudeClarification(store, execution, workspace, evaluation);
+          if (supportsClarification(evaluation)) return readClaudeClarification(store, execution, workspace, evaluation);
           const trace = execution.artifacts.find(({ kind }) => kind === "action-trace");
           const actions = await observedActions(store, trace?.location, workspace);
           if (actions && isUnavailablePreview(evaluation) && observedLocalToolSurface.has(id)) {

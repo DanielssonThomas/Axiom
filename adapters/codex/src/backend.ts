@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { backendRequestSchema, backendResultSchema, usageSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
 import { supportedCodexHost } from "./activation.js";
 import { digest, type CodexBundle } from "./bundle.js";
+import { runCodexPlan, type CodexPlanObserver } from "./clarification.js";
 import { configureCodexProfile, observeCodexProfile } from "./profile.js";
 import { array, nativeJson, nativeVersion, object, runCodex, type CodexProfile } from "./process.js";
 
@@ -107,6 +108,8 @@ export interface CodexBackendOptions {
   authHome?: string;
   /** Observe local preview isolation for this reviewed native-account case. */
   previewCaseId?: string;
+  /** Normalize source-bound Plan-mode observations before archiving them. */
+  planClarification?: CodexPlanObserver;
 }
 
 function inside(root: string, path: string): boolean {
@@ -158,7 +161,7 @@ export async function resolveCodexAccountProgram(program: string): Promise<strin
   throw new Error("The installed Codex npm package lacks its platform executable.");
 }
 
-async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal, preview: boolean) {
+async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal, preview: boolean, plan: boolean) {
   const source = await realpath(authHome);
   const credential = join(source, "auth.json");
   if (inside(profile.workspace, source) || inside(source, profile.workspace) ||
@@ -172,19 +175,21 @@ async function prepareNativeAuth(profile: CodexProfile, authHome: string, archiv
   await writeFile(join(profile.home, "config.toml"), [
     'cli_auth_credentials_store = "file"',
     `default_permissions = "${standardPermissions}"`,
-    ...(preview ? ['web_search = "disabled"'] : []),
+    ...(preview || plan ? ['web_search = "disabled"'] : []),
     "[features]",
     "apps = false",
     "[analytics]",
     "enabled = false",
     `[permissions.${standardPermissions}.filesystem]`,
     '":minimal" = "read"',
-    '":workspace_roots" = "write"',
+    `":workspace_roots" = "${plan ? "read" : "write"}"`,
     `${JSON.stringify(profile.program)} = "read"`,
+    ...(plan ? ['"/usr/bin/cat" = "read"', '"/usr/bin/sed" = "read"', '"/usr/bin/ls" = "read"', '"/usr/bin/readlink" = "read"'] : []),
     `[permissions.${standardPermissions}.network]`,
     "enabled = false",
     "[shell_environment_policy]",
     'inherit = "none"',
+    ...(plan ? ["[shell_environment_policy.set]", 'PATH = "/usr/bin:/bin"'] : []),
     "",
   ].join("\n"), { flag: "wx", mode: 0o600 });
   const login = await runCodex(profile, ["login", "status"], { signal, captureStderr: true });
@@ -193,7 +198,7 @@ async function prepareNativeAuth(profile: CodexProfile, authHome: string, archiv
   }
   const probe = await runCodex(profile, [
     "sandbox", "-P", standardPermissions, "--include-managed-config", "-C", profile.workspace, "--",
-    "/bin/sh", "-c", 'test -w "$1" && ! test -r "$2" && ! test -r "$3" && ! test -r "$4"',
+    "/bin/sh", "-c", `${plan ? 'test -r "$1/issue.txt" && ! test -w "$1"' : 'test -w "$1"'} && ! test -r "$2" && ! test -r "$3" && ! test -r "$4"`,
     "axiom", profile.workspace, credential, link, archive,
   ], { signal });
   if (probe.code !== 0) return "Codex could not confirm that its tool sandbox protects the credential and archive.";
@@ -227,7 +232,9 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       ...(host === undefined ? {} : { host }),
     });
     if (callerSignal.aborted) return result({ status: "not_run", reason: "The Codex attempt was cancelled before launch." });
-    if (!supportedCodexHost(request.host) || process.platform !== request.host.os) {
+    const plan = request.host.surface === "app-server-plan";
+    if (!supportedCodexHost(plan ? { ...request.host, surface: "cli" } : request.host) || process.platform !== request.host.os ||
+        (plan && (!options.planClarification || !options.authHome))) {
       return result({ status: "blocked", reason: "The requested Codex surface, version, or platform is unsupported." });
     }
     try {
@@ -257,7 +264,7 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       if (authHome) {
         // Bubblewrap creates this mount on the host. Own its empty directory before Codex starts any sandbox.
         removeGitMount = await stageGitMountPoint(workspace);
-        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal, preview);
+        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal, preview, plan);
         if (unavailable) return result({ status: "blocked", reason: unavailable });
       }
       if (request.mode === "with_axiom") {
@@ -275,6 +282,18 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       }
       if (preview && !await hasIsolatedPreviewBoundary(profile, signal).catch(() => false)) {
         return result({ status: "blocked", reason: "Codex did not establish a separate tool network and an empty MCP inventory." });
+      }
+      if (plan) {
+        if (!await hasIsolatedPreviewBoundary(profile, signal).catch(() => false)) {
+          return result({ status: "blocked", reason: "Codex Plan mode could not establish a separate tool network and an empty MCP inventory." });
+        }
+        const actions = await runCodexPlan(profile, request, signal, options.planClarification!);
+        if (!actions) return result({ status: "blocked", reason: "Codex Plan mode did not return a complete native observation." });
+        const location = `${request.id}.clarification.json`;
+        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, actions }) + "\n";
+        await writeFile(join(artifactsRoot, location), body, { flag: "wx", mode: 0o600 });
+        artifacts.push({ kind: "native-clarification", location, digest: digest(body) });
+        return result({ status: "passed" });
       }
       const execution = await runCodex(profile, [
         "--ask-for-approval", "never", "exec", ...(authHome ? ["--ignore-rules"] : ["--sandbox", "workspace-write"]), "--ephemeral",

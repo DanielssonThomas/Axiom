@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { evaluationCaseSchema } from "@axiom/contracts";
 import { expect, test } from "vitest";
 import { codexClarificationActions } from "../../packages/cli/src/codex-clarification.js";
+import { supportsStandardBenchmarkCase } from "../../packages/cli/src/standard-benchmark.js";
 
 const turn = { workspace: resolve("fixture"), threadId: "thread", turnId: "turn", caseId: "resolve-format-decision" };
 const context = { threadId: turn.threadId, turnId: turn.turnId };
@@ -12,6 +15,16 @@ const ask = { id: 12, method: "item/tool/requestUserInput", params: { ...context
 } };
 const resolved = { method: "serverRequest/resolved", params: { threadId: turn.threadId, requestId: ask.id } };
 const complete = { method: "turn/completed", params: { threadId: turn.threadId, turn: { id: turn.turnId, status: "completed" } } };
+
+test.each([["codex", "app-server-plan"], ["hermes", "gateway-runs"]])(
+  "%s admits reviewed clarification only on its interactive surface", (agent, surface) => {
+    const evaluation = evaluationCaseSchema.parse(JSON.parse(readFileSync(new URL(
+      "../../evals/cases/resolve-format-decision.json", import.meta.url,
+    ), "utf8")));
+    expect(supportsStandardBenchmarkCase(agent, evaluation, surface)).toBe(true);
+    expect(supportsStandardBenchmarkCase(agent, evaluation, "cli")).toBe(false);
+  },
+);
 
 test("captures a confirmed native clarification after its completed issue read", () => {
   expect(codexClarificationActions([read, ask, resolved, complete], turn)).toEqual([

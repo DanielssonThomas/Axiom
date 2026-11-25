@@ -22,9 +22,9 @@ test.each(["codex", "hermes"])("keeps strict %s qualification unavailable before
 });
 
 test.runIf(process.platform === "linux").each([
-  ["codex", "codex-cli 0.172.0-alpha.2", "gpt-5.4"],
-  ["hermes", "Hermes Agent v0.23.3 (fixture)", "gpt-5.4"],
-])("preflights the %s reuse and preview pairs with no account access", async (host, version, model) => {
+  ["codex", "codex-cli 0.172.0-alpha.2", "gpt-5.4", "app-server-plan"],
+  ["hermes", "Hermes Agent v0.23.3 (fixture)", "gpt-5.4", "gateway-runs"],
+])("preflights the %s reuse, preview and clarification pairs with no account access", async (host, version, model, surface) => {
   const root = await mkdtemp(join(tmpdir(), "axiom-preflight-"));
   try {
     const program = join(root, host);
@@ -47,7 +47,13 @@ echo '${version}'
         limits: { plannedAttempts: 2 }, qualification: { status: "blocked" },
       } },
     });
-    expect(await preflight(...runtime, "--case", "resolve-format-decision")).toMatchObject({
+    for (const task of ["resolve-format-decision", "clarify-material-decision"]) {
+      expect(await preflight(...runtime, "--case", task, "--model", "gpt-6-luna", "--max-attempts", "2", "--timeout-seconds", "120"))
+        .toMatchObject({ code: 0, output: { status: "passed", report: {
+          host: { surface, model: "gpt-6-luna" }, caseIds: [task], limits: { plannedAttempts: 2, maxAttempts: 2, timeoutSeconds: 120 },
+        } } });
+    }
+    expect(await preflight(...pair, "--case", "resolve-format-decision")).toMatchObject({
       code: 1, output: { status: "blocked", reason: expect.stringMatching(/cannot independently evaluate/) },
     });
     expect(await preflight(...pair, "--max-attempts", "1")).toMatchObject({

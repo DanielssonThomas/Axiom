@@ -9,7 +9,8 @@ import { createHermesAccountBackend, hermesBundleAdapter, hermesVersion } from "
 import { unavailablePreviewCase } from "@axiom/graders";
 import { defaultCase, isSupportedBenchmarkLimits, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { codexDigest } from "./native-install.js";
-import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
+import { admittedClarification, clarificationTopic, readClaudeClarification, readNativeClarification, supportsClarification } from "./claude-clarification.js";
+import { codexClarificationActions } from "./codex-clarification.js";
 import { nativeProgram } from "./native-program.js";
 import { nativePreviewActions, supportsNativePreview } from "./preview-observation.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
@@ -34,14 +35,20 @@ const unknownUsage: Usage = {
 const blocked = (reason: string): { outcome: EvidenceOutcome } => ({ outcome: { status: "blocked", reason } });
 export const standardHostUnavailable = "Standard account execution currently supports the pinned Linux Claude, Codex, and Hermes CLIs.";
 
-export function standardBenchmarkHost(agent: string, model?: string): HostIdentity | undefined {
-  if (!Object.hasOwn(hosts, agent) || process.platform !== "linux") return;
-  const host = hosts[agent as Agent];
-  return { agent, version: host.version, model: model ?? host.model, os: process.platform, surface: "cli" };
+function clarificationSurface(agent: string) {
+  return agent === "codex" ? "app-server-plan" : agent === "hermes" ? "gateway-runs" : undefined;
 }
 
-export function supportsStandardBenchmarkCase(agent: string, item: EvaluationCase) {
-  return (item.id === defaultCase && item.requiredCapabilities.length === 0) || (agent === "claude" && supportsClaudeClarification(item)) ||
+export function standardBenchmarkHost(agent: string, model?: string, caseIds?: readonly string[]): HostIdentity | undefined {
+  if (!Object.hasOwn(hosts, agent) || process.platform !== "linux") return;
+  const host = hosts[agent as Agent];
+  const surface = caseIds?.length && caseIds.every((id) => clarificationTopic(id)) ? clarificationSurface(agent) : undefined;
+  return { agent, version: host.version, model: model ?? host.model, os: process.platform, surface: surface ?? "cli" };
+}
+
+export function supportsStandardBenchmarkCase(agent: string, item: EvaluationCase, surface = "cli") {
+  if (surface !== "cli") return surface === clarificationSurface(agent) && supportsClarification(item);
+  return (item.id === defaultCase && item.requiredCapabilities.length === 0) || (agent === "claude" && supportsClarification(item)) ||
     ((agent === "codex" || agent === "hermes") && supportsNativePreview(item));
 }
 
@@ -71,8 +78,9 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
     if (!isCommit(baselineRef)) return blocked("Use the full reviewed baseline commit SHA.");
     baseline = await prepareReviewedBaseline(repository, tmpdir(), revision, { baselineRef });
     const claude = host.agent === "claude";
+    const interactive = host.surface !== "cli";
     const archive = await prepareBenchmarkArchive(options, baseline, revision, baselineRef, (item) =>
-      supportsStandardBenchmarkCase(host.agent, item));
+      supportsStandardBenchmarkCase(host.agent, item, host.surface));
     await writeReviewedLicense(repository, baseline, baselineRef);
     scratch = await mkdtemp(join(tmpdir(), "axiom-native-account-"));
     cancellation.throwIfAborted();
@@ -81,7 +89,7 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
     const preview = archive.cases.some(supportsNativePreview);
     const result = await runArchivedBenchmark(archive, {
       ...plan, host, signal: cancellation,
-      ...(claude || preview ? { capabilities: [{ id: "action-trace", available: true }] as const } : {}),
+      ...(claude || preview || interactive ? { capabilities: [{ id: "action-trace", available: true }] as const } : {}),
       ...(claude ? {
         backend: { run(request, abort) {
           workspaces.set(request.id, request.workspace);
@@ -90,6 +98,7 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
       } : {}),
       async actions(evaluation, value) {
         if (preview && supportsNativePreview(evaluation)) return nativePreviewActions(archive.store, value);
+        if (interactive) return readNativeClarification(archive.store, value.execution, evaluation);
         const workspace = workspaces.get(value.execution.requestId);
         if (workspace !== undefined) return readClaudeClarification(archive.store, value.execution, workspace, evaluation);
       },
@@ -115,27 +124,30 @@ async function configureNative(agent: Agent, program: string, authHome: string, 
   const common = { version, sourceRevision: baselineRef, policyVersion: catalog.core.version,
     selectedProfiles: profiles, checks: catalog.checks, skills };
   const preview = archive.cases.some(supportsNativePreview) ? { previewCaseId: unavailablePreviewCase.id } : {};
+  const interactive = archive.cases.every(supportsClarification);
   if (agent === "claude") {
     const bundle = await buildClaudeBundle({ ...common, repository, destination: scratch });
     return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
-      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome, clarification: admittedClaudeClarification(archive.cases) }) };
+      backend: createClaudeBackend({ program, artifacts: evidenceDirectory, bundle, authHome, clarification: admittedClarification(archive.cases) }) };
   }
   if (agent === "codex") {
     const bundle = await buildCodexBundle({ version, source: repository, destination: scratch, catalog, profiles });
     return { policy: bundle.policy, bundleDigest: await codexDigest(bundle.root), backend: createCodexBackend({
       program, artifacts: evidenceDirectory, bundle, authHome, ...preview,
+      ...(interactive && { planClarification: codexClarificationActions }),
     }) };
   }
   const [bundle] = writeBundles(scratch, assembleBundles(repository, { ...common, adapters: [hermesBundleAdapter] }));
   if (!bundle) throw new Error("The benchmark Hermes bundle could not be assembled.");
   return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest, backend: createHermesAccountBackend({
     executable: program, archiveDirectory: evidenceDirectory, bundle: bundle.directory, authHome, ...preview,
+    ...(interactive && { clarification: admittedClarification(archive.cases) }),
   }) };
 }
 
 export async function runStandardBenchmark(agent: string, options: StandardBenchmarkOptions, signal?: AbortSignal): Promise<StandardBenchmarkResult> {
   if (!options.allowNative) return blocked("Authorize native model execution explicitly with --allow-native.");
-  const selectedHost = standardBenchmarkHost(agent, options.model);
+  const selectedHost = standardBenchmarkHost(agent, options.model, options.caseIds);
   if (!selectedHost) return blocked(standardHostUnavailable);
   const name = agent as Agent;
   const host = hosts[name];

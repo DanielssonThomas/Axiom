@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -8,6 +7,7 @@ import { evaluationCaseSchema } from "@axiom/contracts";
 import { expect, test } from "vitest";
 import { changeHermesPlugin, hermesBundleAdapter, hermesVersion, inspectHermesActivation } from "../../../adapters/hermes/src/index.js";
 import { openHermesGateway, runHermes } from "../../../adapters/hermes/src/process.js";
+import { localHermesPort } from "../../../adapters/hermes/src/clarification.js";
 import { gradeCase } from "../../../evals/graders/index.js";
 import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../../packages/bundles/src/index.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
@@ -45,18 +45,6 @@ interface RunEvent extends Partial<PendingClarification> {
   error?: boolean;
 }
 
-async function localPort() {
-  const listener = createServer();
-  await new Promise<void>((resolve, reject) => listener.once("error", reject).listen(0, "127.0.0.1", resolve));
-  try {
-    const address = listener.address();
-    if (!address || typeof address === "string") throw new Error("The disposable gateway could not reserve a local port.");
-    return address.port;
-  } finally {
-    await new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
-  }
-}
-
 async function poll<T>(sample: () => Promise<T | undefined>, reason: string, signal: AbortSignal): Promise<T> {
   const until = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
   try {
@@ -88,7 +76,7 @@ test.runIf(executable && process.platform === "linux")(
     const selected = join(home, "profiles", profile);
     const target = { home, profile };
     const signal = AbortSignal.timeout(85_000);
-    const port = await localPort();
+    const port = await localHermesPort();
     const token = randomUUID();
     const loopback = await openLoopback("hermes", model, ({ text, toolResults }) => {
       if (!text.includes(evaluation.prompt)) return;

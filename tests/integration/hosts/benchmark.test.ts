@@ -10,7 +10,7 @@ import { reviewNativeBenchmark } from "../../../packages/cli/src/benchmark-revie
 import { defaultBenchmarkLimits, runTrustedClaude } from "../../../packages/cli/src/native-benchmark.js";
 import { benchmarkModel } from "../../../packages/cli/src/claude-provider.js";
 import { benchmarkRevision, prepareReviewedBaseline } from "../../../packages/cli/src/reviewed-baseline.js";
-import { admittedClaudeClarification, clarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
+import { admittedClarification, clarificationTopic, supportsClarification } from "../../../packages/cli/src/claude-clarification.js";
 import { runStandardArchive } from "../../../packages/cli/src/standard-benchmark.js";
 import { runBenchmark } from "../../../packages/benchmark/src/index.js";
 import { EvidenceStore, snapshotSource } from "../../../packages/evidence/src/index.js";
@@ -151,7 +151,7 @@ test.runIf(executable && process.platform === "linux")("grades and replays paire
         sourceRevision: archive.baselineRef, policyVersion: catalog.core.version, selectedProfiles: archive.profiles, checks: catalog.checks, skills,
       });
       return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest, backend: createClaudeBackend({
-        program: executable!, artifacts: archive.evidenceDirectory, bundle, clarification: admittedClaudeClarification(archive.cases),
+        program: executable!, artifacts: archive.evidenceDirectory, bundle, clarification: admittedClarification(archive.cases),
         environment: { ANTHROPIC_BASE_URL: server.endpoint, ANTHROPIC_AUTH_TOKEN: "loopback-only" },
       }) };
     });
@@ -193,12 +193,12 @@ test("requires a material output choice and a required canonical clarification a
     ],
     profiles: [], fixture: "unused", prompt: "unused", principleIds: ["AX-01"],
   } satisfies EvaluationCase;
-  expect(supportsClaudeClarification(definition)).toBe(false);
+  expect(supportsClarification(definition)).toBe(false);
   const required = { ...definition, assertions: definition.assertions.map((item) => ({ ...item, required: true })) };
-  expect(admittedClaudeClarification([required])(required.id)).toBeTypeOf("function");
-  expect(admittedClaudeClarification([{ ...required, version: "2" }])(required.id)).toBeUndefined();
+  expect(admittedClarification([required])(required.id)).toBeTypeOf("function");
+  expect(admittedClarification([{ ...required, version: "2" }])(required.id)).toBeUndefined();
   const changedGrader = { ...required, assertions: [{ ...required.assertions[0]!, grader: "trace.context-discovery" }] };
-  expect(admittedClaudeClarification([changedGrader])(required.id)).toBeUndefined();
+  expect(admittedClarification([changedGrader])(required.id)).toBeUndefined();
 });
 
 

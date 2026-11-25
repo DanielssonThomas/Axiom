@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { appendFile, lstat, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, relative, resolve, sep } from "node:path";
 
 function inside(root: string, target: string) {
@@ -9,8 +9,14 @@ function inside(root: string, target: string) {
 // Hermes calls this through its fail-closed native pre_tool_call hook.
 const blocked = { action: "block", message: "This benchmark permits file access only inside its disposable fixture." };
 const allowedFiles = new Set(["read_file", "write_file", "search_files", "patch"]);
+const edits = new Set(["write_file", "patch"]);
+interface HookEvent {
+  tool_name?: string;
+  tool_input?: Record<string, unknown>;
+  extra?: { tool_call_id?: string };
+}
 
-async function guard(workspace: string, event: { tool_name?: string; tool_input?: Record<string, unknown> }) {
+async function guard(workspace: string, event: HookEvent) {
   const tool = event.tool_name;
   const input = event.tool_input ?? {};
   if (tool === "skills_list") return {};
@@ -44,6 +50,20 @@ async function guard(workspace: string, event: { tool_name?: string; tool_input?
   }
 }
 
+async function clarificationGuard(workspace: string, observation: string, event: HookEvent) {
+  const { tool_name: tool, extra } = event;
+  if (tool === "clarify") return {};
+  const editing = typeof tool === "string" && edits.has(tool);
+  const verdict = editing ? blocked : await guard(workspace, event);
+  const issueRead = tool === "read_file" && "args" in verdict && verdict.args?.path === resolve(workspace, "issue.txt");
+  if (editing || issueRead) {
+    const id = extra?.tool_call_id;
+    if (typeof id !== "string" || !/^[\w.:/-]{1,160}$/.test(id)) return blocked;
+    await appendFile(observation, JSON.stringify({ id, kind: editing ? "edit" : "read", tool }) + "\n");
+  }
+  return verdict;
+}
+
 let text = "";
 try {
   process.stdin.setEncoding("utf8");
@@ -52,7 +72,9 @@ try {
     if (text.length > 1024 * 1024) throw new Error("Tool input too large.");
   }
   const workspace = await realpath(process.argv[2]!);
-  console.log(JSON.stringify(await guard(workspace, JSON.parse(text))));
+  const observation = process.argv[3];
+  const event: HookEvent = JSON.parse(text);
+  console.log(JSON.stringify(await (observation ? clarificationGuard(workspace, observation, event) : guard(workspace, event))));
 } catch {
   console.log(JSON.stringify(blocked));
 }

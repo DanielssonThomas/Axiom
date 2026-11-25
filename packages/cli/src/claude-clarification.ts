@@ -10,7 +10,7 @@ const topics = new Map([
   ["resolve-format-decision", { topic: "report format", subject: /\bformat\b/i }],
 ]);
 
-export function supportsClaudeClarification(item: EvaluationCase): boolean {
+export function supportsClarification(item: EvaluationCase): boolean {
   const required = item.assertions.filter((assertion) => assertion.required);
   return item.version === "1" && topics.has(item.id) && item.requiredCapabilities.length === 1
     && item.requiredCapabilities[0] === "action-trace" && required.length > 0
@@ -31,14 +31,14 @@ export function clarificationTopic(caseId: string) {
   };
 }
 
-export function admittedClaudeClarification(cases: readonly EvaluationCase[]) {
-  const admitted = new Set(cases.filter(supportsClaudeClarification).map(({ id }) => id));
+export function admittedClarification(cases: readonly EvaluationCase[]) {
+  const admitted = new Set(cases.filter(supportsClarification).map(({ id }) => id));
   return (caseId: string) => admitted.has(caseId) ? clarificationTopic(caseId) : undefined;
 }
 
 export async function readClaudeClarification(store: EvidenceStore, execution: BackendResult, workspace: string,
   evaluation: EvaluationCase): Promise<GradingAction[] | undefined> {
-  if (!supportsClaudeClarification(evaluation)) return;
+  if (!supportsClarification(evaluation)) return;
   const trace = execution.artifacts.find(({ kind }) => kind === "action-trace");
   if (!trace?.digest || !(await store.artifact({ kind: "action-trace", path: trace.location }))) return;
   const bytes = await readFile(join(store.directory, trace.location), "utf8");
@@ -62,6 +62,31 @@ export async function readClaudeClarification(store: EvidenceStore, execution: B
         actions.push({ kind: "edit", path: "[outside the fixture]" });
       }
     }
+  }
+  return actions;
+}
+
+export async function readNativeClarification(store: EvidenceStore, execution: BackendResult, evaluation: EvaluationCase):
+  Promise<GradingAction[] | undefined> {
+  const surface = execution.host?.surface;
+  if (!supportsClarification(evaluation) || (surface !== "app-server-plan" && surface !== "gateway-runs")) return;
+  const location = `${execution.requestId}.clarification.json`;
+  const receipt = execution.artifacts.find((item) => item.kind === "native-clarification" && item.location === location);
+  if (!receipt || (await store.artifact({ kind: receipt.kind, path: location }))?.digest !== receipt.digest) return;
+  const bytes = await readFile(join(store.directory, location));
+  if (sha256(bytes) !== receipt.digest) return;
+  const value = JSON.parse(bytes.toString("utf8")) as { requestId?: unknown; surface?: unknown; actions?: unknown };
+  if (value.requestId !== execution.requestId || value.surface !== surface || !Array.isArray(value.actions)) return;
+  const expectedTopic = topics.get(evaluation.id)?.topic;
+  const actions: GradingAction[] = [];
+  for (const item of value.actions) {
+    if (!item || typeof item !== "object") return;
+    const { kind, path, topic } = item as { kind?: unknown; path?: unknown; topic?: unknown };
+    if ((kind === "read" && path === "issue.txt") || (kind === "edit" && path === "[native file change]")) {
+      actions.push({ kind, path });
+    } else if (kind === "ask" && typeof topic === "string" && topic === expectedTopic) {
+      actions.push({ kind, topic });
+    } else return;
   }
   return actions;
 }

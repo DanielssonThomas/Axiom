@@ -33,7 +33,7 @@ async function probeVersion(host: HostIdentity, home: string, program: string, s
 
 export async function runBenchmarkPreflight(agent: string, options: PreflightOptions, signal: AbortSignal) {
   const strict = options.mode === "strict";
-  const host = strict ? strictBenchmarkHost : standardBenchmarkHost(agent, options.model);
+  const host = strict ? strictBenchmarkHost : standardBenchmarkHost(agent, options.model, options.caseIds);
   if (strict && (agent !== strictBenchmarkHost.agent || process.platform !== strictBenchmarkHost.os ||
       (options.model !== undefined && options.model !== strictBenchmarkHost.model))) return blocked(strictHostUnavailable);
   if (!host) return blocked(standardHostUnavailable);
@@ -49,7 +49,7 @@ export async function runBenchmarkPreflight(agent: string, options: PreflightOpt
     const baselineRef = options.baselineRef ?? revision;
     baseline = await prepareReviewedBaseline(options.repository, tmpdir(), revision, { baselineRef });
     const plan = await inspectBenchmarkPlan(options, baseline, revision,
-      strict ? supportsStrictBenchmarkCase : (item) => supportsStandardBenchmarkCase(agent, item),
+      strict ? supportsStrictBenchmarkCase : (item) => supportsStandardBenchmarkCase(agent, item, host.surface),
       strict ? assertPrivateBenchmarkPath : undefined);
     const plannedAttempts = 2 * plan.caseIds.length * options.repetitions;
     const limits = { plannedAttempts, maxAttempts: options.maxAttempts ?? plannedAttempts,
