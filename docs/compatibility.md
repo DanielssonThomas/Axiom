@@ -100,7 +100,7 @@ On Linux, Codex 0.172.0-alpha.2 exposed a blocking `item/tool/requestUserInput` 
 
 ### Signed-in clarification
 
-The Linux standard benchmark uses the Codex Plan app-server or the authenticated Hermes gateway Runs API for the two reviewed clarification cases. Run these cases separately from CLI reuse and preview reporting. The verifier withholds the project decision and records the independently observed issue read and the matching native clarification control. Replay runs the existing grader on the archived actions and fixture snapshots.
+The Linux standard benchmark uses the Codex Plan app-server or the authenticated Hermes gateway Runs API for the two reviewed clarification cases. Run these cases separately from CLI reuse and preview reporting. Both arms receive the same notice describing how to contact the operator through the native question tool. The verifier withholds the project decision and records the independently observed issue read and matching clarification control. Receipts include the observed and settled control counts and whether visible assistant text contained a question mark. Replay runs the existing grader on the archived actions and fixture snapshots.
 
 ```sh
 BASELINE=$(git rev-parse HEAD)

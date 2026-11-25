@@ -82,11 +82,11 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       }
       if (signal.aborted || remaining() < 1) return blocked("Hermes account execution was cancelled or exhausted its time limit.");
       if (clarify && observation) {
-        const actions = await runHermesClarification({ ...command, args: ["--profile", profile, "gateway", "run",
+        const observed = await runHermesClarification({ ...command, args: ["--profile", profile, "gateway", "run",
           "--no-supervise", "--external-supervisor"] }, directory, profile, request, selectedProvider, observation, clarify);
-        if (!actions) return blocked("The Hermes gateway did not return a complete native clarification observation.");
+        if (!observed) return blocked("The Hermes gateway did not return a complete native clarification observation.");
         const location = `${request.id}.clarification.json`;
-        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, actions }) + "\n";
+        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, ...observed }) + "\n";
         await writeFile(join(options.archiveDirectory, location), body, { flag: "wx", mode: 0o600 });
         return { requestId: request.id, host: request.host, durationMs: performance.now() - started,
           outcome: { status: "passed" as const }, usage: unmetered, artifacts: [{

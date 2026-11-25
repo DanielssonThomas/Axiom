@@ -14,8 +14,10 @@ export async function runCodexPlan(profile: CodexProfile, request: BackendReques
   let threadId: string | undefined;
   let turnId: string | undefined;
   let completed = false;
+  let assistantMessageHasQuestionMark = false;
   const messages: unknown[] = [];
   const answered = new Set<string | number>();
+  const settled = new Set<string | number>();
   const result = await runCodex(profile, ["app-server", "--stdio"], {
     signal, experimentalApi: true,
     onLine(line, send, end) {
@@ -45,7 +47,14 @@ export async function runCodexPlan(profile: CodexProfile, request: BackendReques
         }
         return;
       }
-      if (params.threadId === threadId && threadId !== undefined) messages.push(message);
+      if (params.threadId === threadId && threadId !== undefined) {
+        messages.push(message);
+        const item = object(params.item);
+        if (method === "item/completed" && params.turnId === turnId && item.type === "agentMessage" &&
+            typeof item.text === "string" && /[?？]/u.test(item.text)) assistantMessageHasQuestionMark = true;
+        if (method === "serverRequest/resolved" && (typeof params.requestId === "number" || typeof params.requestId === "string") &&
+            answered.has(params.requestId)) settled.add(params.requestId);
+      }
       if (method === "item/tool/requestUserInput") {
         if (threadId === undefined || turnId === undefined || params.threadId !== threadId || params.turnId !== turnId ||
             params.isBlocking !== true || (typeof id !== "string" && typeof id !== "number") || answered.has(id)) {
@@ -63,5 +72,6 @@ export async function runCodexPlan(profile: CodexProfile, request: BackendReques
     },
   });
   if (result.code !== 0 || !completed || !threadId || !turnId) return;
-  return observe(messages, { workspace: profile.workspace, threadId, turnId, caseId: request.caseId });
+  const actions = observe(messages, { workspace: profile.workspace, threadId, turnId, caseId: request.caseId });
+  if (actions) return { actions, blockingControls: answered.size, settledBlockingControls: settled.size, assistantMessageHasQuestionMark };
 }

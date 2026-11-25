@@ -39,6 +39,11 @@ function clarificationSurface(agent: string) {
   return agent === "codex" ? "app-server-plan" : agent === "hermes" ? "gateway-runs" : undefined;
 }
 
+function clarificationTransport(surface: string) {
+  const tool = surface === "app-server-plan" ? "request_user_input" : surface === "gateway-runs" ? "clarify" : undefined;
+  if (tool) return `If you need to ask the operator a question, send it through the native ${tool} tool. This session receives operator responses through that tool.`;
+}
+
 export function standardBenchmarkHost(agent: string, model?: string, caseIds?: readonly string[]): HostIdentity | undefined {
   if (!Object.hasOwn(hosts, agent) || process.platform !== "linux") return;
   const host = hosts[agent as Agent];
@@ -87,15 +92,14 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
     const plan = await configure(archive, scratch);
     const workspaces = new Map<string, string>();
     const preview = archive.cases.some(supportsNativePreview);
+    const transport = clarificationTransport(host.surface);
+    const backend: BenchmarkBackend = claude || transport ? { run(request, abort) {
+      if (claude) workspaces.set(request.id, request.workspace);
+      return plan.backend.run(transport ? { ...request, prompt: `${request.prompt}\n\n${transport}` } : request, abort);
+    } } : plan.backend;
     const result = await runArchivedBenchmark(archive, {
-      ...plan, host, signal: cancellation,
+      ...plan, backend, host, signal: cancellation,
       ...(claude || preview || interactive ? { capabilities: [{ id: "action-trace", available: true }] as const } : {}),
-      ...(claude ? {
-        backend: { run(request, abort) {
-          workspaces.set(request.id, request.workspace);
-          return plan.backend.run(request, abort);
-        } },
-      } : {}),
       async actions(evaluation, value) {
         if (preview && supportsNativePreview(evaluation)) return nativePreviewActions(archive.store, value);
         if (interactive) return readNativeClarification(archive.store, value.execution, evaluation);

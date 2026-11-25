@@ -84,6 +84,7 @@ export async function runHermesClarification(launch: Launch, directory: string, 
     const route = `/v1/runs/${run}`;
     const answered = new Map<string, Prompt>();
     let admission: string | undefined;
+    let assistantMessageHasQuestionMark = false;
     while (true) {
       const state = record(await (await json(route)).json());
       if (state.run_id !== run || state.session_id !== session) return;
@@ -95,6 +96,7 @@ export async function runHermesClarification(launch: Launch, directory: string, 
         const runtime = record(state.runtime);
         if (state.status !== "completed" || !admission || (runtime.model && runtime.model !== request.host.model) ||
             (runtime.provider && runtime.provider !== provider)) return;
+        assistantMessageHasQuestionMark = typeof state.output === "string" && /[?？]/u.test(state.output);
         break;
       }
       if (Array.isArray(state.pending_controls) && state.pending_controls.length) {
@@ -122,7 +124,8 @@ export async function runHermesClarification(launch: Launch, directory: string, 
     // The pinned Runs API can omit the served model even for a completed turn.
     const models = receipts.filter(({ kind }) => kind === "served-model");
     if (models.length !== 1 || models[0]?.model !== request.host.model) return;
-    return observations(events, receipts.filter(({ kind }) => kind !== "served-model"), answered, classify);
+    const actions = observations(events, receipts.filter(({ kind }) => kind !== "served-model"), answered, classify);
+    if (actions) return { actions, blockingControls: answered.size, settledBlockingControls: answered.size, assistantMessageHasQuestionMark };
   } finally {
     await gateway.stop();
   }

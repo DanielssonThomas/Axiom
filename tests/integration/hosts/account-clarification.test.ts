@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -54,7 +54,22 @@ for (const [agent, binary, surface, caseId] of [
       expect(server.requests.every(({ model: served }) => served === model)).toBe(true);
       expect(server.requests.some(({ text }) => text.includes("# Axiom Core"))).toBe(true);
       expect(server.requests.some(({ text }) => !text.includes("# Axiom Core"))).toBe(true);
+      const tool = agent === "codex" ? "request_user_input" : "clarify";
+      const initial = server.requests.filter(({ toolResults }) => toolResults.length === 0);
+      expect(initial).toHaveLength(2);
+      for (const input of initial) expect(input.tools).toContain(tool);
+      for (const input of initial) expect(input.userMessages.join("\n")).toContain(
+        `If you need to ask the operator a question, send it through the native ${tool} tool.`,
+      );
       expect((await reviewNativeBenchmark(repository, archive.evidenceDirectory, archive.evidenceDigest)).outcome.status).toBe("passed");
+      for (const [index, attempt] of archive.report.attempts.entries()) {
+        const receipt = attempt.execution!.artifacts.find(({ kind }) => kind === "native-clarification")!;
+        expect(JSON.parse(await readFile(join(archive.evidenceDirectory, receipt.location), "utf8"))).toMatchObject({
+          blockingControls: index === 0 ? 1 : 0,
+          settledBlockingControls: index === 0 ? 1 : 0,
+          assistantMessageHasQuestionMark: expect.any(Boolean),
+        });
+      }
       const receipt = archive.report.attempts[0]!.execution!.artifacts.find(({ kind }) => kind === "native-clarification")!;
       await writeFile(join(archive.evidenceDirectory, receipt.location), "tampered\n");
       expect((await reviewNativeBenchmark(repository, archive.evidenceDirectory, archive.evidenceDigest)).outcome.status).toBe("blocked");

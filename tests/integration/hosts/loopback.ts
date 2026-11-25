@@ -8,6 +8,8 @@ export interface RequestObservation {
   model: string;
   text: string;
   systemMessages: string[];
+  userMessages: string[];
+  tools: string[];
   toolResults: string[];
 }
 
@@ -108,6 +110,20 @@ export async function openLoopback(protocol: NativeHost, model: string,
       const systemMessages = Array.isArray(messages) ? messages.flatMap((message) =>
         message?.role === "system" ? [strings(message.content).join("\n")] : [],
       ) : [];
+      const inputMessages = Array.isArray(responsesInput) ? responsesInput : messages;
+      const userMessages = Array.isArray(inputMessages) ? inputMessages.flatMap((message) =>
+        message?.role === "user" ? [strings(message.content).join("\n")] : [],
+      ) : [];
+      const suppliedTools = body && typeof body === "object" && "tools" in body ? body.tools : undefined;
+      // Codex Responses Lite carries its tool inventory in a developer input item.
+      const embeddedTools = Array.isArray(responsesInput) ? responsesInput.flatMap((item) =>
+        item?.type === "additional_tools" && Array.isArray(item.tools) ? item.tools : [],
+      ) : [];
+      const declarations = [...(Array.isArray(suppliedTools) ? suppliedTools : []), ...embeddedTools];
+      const tools = declarations.flatMap((tool) => tool?.type === "namespace" && Array.isArray(tool.tools) ? tool.tools : [tool]).flatMap((tool) => {
+        const name = tool?.name ?? tool?.function?.name;
+        return typeof name === "string" ? [name] : [];
+      });
       const toolResults = protocol === "codex" && Array.isArray(responsesInput) ? responsesInput.flatMap((item) =>
         item?.type === "function_call_output" ? [strings(item.output).join("\n")] : [],
       ) : Array.isArray(messages) ? messages.flatMap((message) =>
@@ -116,7 +132,7 @@ export async function openLoopback(protocol: NativeHost, model: string,
             ? message.content.filter((part: { type?: string }) => part?.type === "tool_result").map((part: unknown) => strings(part).join("\n"))
             : [],
       ) : [];
-      const observation = { model: requestedModel, text: strings(body).join("\n"), systemMessages, toolResults };
+      const observation = { model: requestedModel, text: strings(body).join("\n"), systemMessages, userMessages, tools, toolResults };
       requests.push(observation);
       const tool = nextHermesTool;
       nextHermesTool = undefined;

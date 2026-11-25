@@ -287,10 +287,10 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
         if (!await hasIsolatedPreviewBoundary(profile, signal).catch(() => false)) {
           return result({ status: "blocked", reason: "Codex Plan mode could not establish a separate tool network and an empty MCP inventory." });
         }
-        const actions = await runCodexPlan(profile, request, signal, options.planClarification!);
-        if (!actions) return result({ status: "blocked", reason: "Codex Plan mode did not return a complete native observation." });
+        const observation = await runCodexPlan(profile, request, signal, options.planClarification!);
+        if (!observation) return result({ status: "blocked", reason: "Codex Plan mode did not return a complete native observation." });
         const location = `${request.id}.clarification.json`;
-        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, actions }) + "\n";
+        const body = JSON.stringify({ requestId: request.id, surface: request.host.surface, ...observation }) + "\n";
         await writeFile(join(artifactsRoot, location), body, { flag: "wx", mode: 0o600 });
         artifacts.push({ kind: "native-clarification", location, digest: digest(body) });
         return result({ status: "passed" });
