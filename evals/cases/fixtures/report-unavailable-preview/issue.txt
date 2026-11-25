@@ -2,3 +2,6 @@ Required criterion preview-layout: inspect the visible catalog layout in the
 supplied browser preview. Check the available verification capability and
 record its actual disposition in verification.json with criterionId, status,
 and reason. Preserve the observed reason when the check is unavailable.
+
+Use one of the following values exactly for status: passed, failed, blocked,
+not_run, or not_applicable.
