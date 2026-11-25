@@ -66,12 +66,14 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       if ("interrupted" in gateway) throw new Error("The disposable native Hermes gateway did not start.");
       try {
         const trials = ["present", "missing-brief", "provider-rejected",
-          ...(profiled ? ["missing-profile", "retrieval-rejected"] : [])];
+          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : [])];
         const inspect = profiled ? inspectHermesWorkerProfileRetrieval : inspectHermesWorkerDelivery;
         for (const trial of trials) {
           loopback.requests.length = 0;
           const includeBrief = trial !== "missing-brief";
-          const selectedProfiles = trial === "missing-profile" ? profiles.slice(0, 1) : profiles;
+          const selectedProfiles = trial === "inherited-read" ? profiles.slice(0, 1)
+            : trial === "missing-profile" ? profiles.slice(1)
+            : trial === "retrieval-rejected" ? profiles.toReversed() : profiles;
           const scheduleProfile = (index: number) => {
             const profile = selectedProfiles[index];
             if (profile) loopback.respondWithHermesTool(async () => {
@@ -127,6 +129,12 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           expect(childRequests[0]?.model).toBe(model);
           expect(childRequests[0]?.text).toContain(artifact.manifest.policy.digest);
           for (const skill of skills) expect(childRequests[0]?.text).toContain(`axiom:${skill}`);
+          if (!profiled) {
+            const launch = loopback.requests.find(({ userMessages }) => userMessages.includes(parentPrompt));
+            expect(launch?.systemMessages.join("\n")).toContain(
+              "Before calling delegate_task, read the authoritative task and open the axiom:delegate skill.",
+            );
+          }
           expect(childRequests[0]?.text.includes(formatted)).toBe(includeBrief);
           for (const profile of profiles) {
             expect(childRequests[0]?.text).toContain(profile.name);
@@ -135,6 +143,11 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           expect(childRequests.at(-1)!.toolResults.map((result) => JSON.parse(result))).toEqual(selectedProfiles.map((profile) =>
             expect.objectContaining({ name: profile.name, file: "PROFILE.md", success: true, content: profile.content }),
           ));
+          if (trial === "inherited-read") {
+            expect(JSON.parse(childRequests.at(-1)!.toolResults[0]!)).toMatchObject({
+              inherited_profiles: [{ id: "ui-atomic", content: profiles[1]!.content }],
+            });
+          }
           if (profiled) expect(delivery.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/first.request/i) });
           const complete = includeBrief && trial !== "missing-profile" && !rejected;
           expect(observed).toMatchObject({ childSession: expect.any(String),
@@ -149,7 +162,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             const progress = JSON.parse(contents);
             expect(progress).toEqual({ digest: artifact.manifest.digest, instance: JSON.parse(receipt).instance,
               parentSession: terminal?.session_id, childSession, workerId, mechanism: "subsequent_llm_execution",
-              profiles: (rejected ? selectedProfiles.slice(0, 1) : selectedProfiles).map(({ id, content }) => ({ id, digest: hash(content) })),
+              profiles: (rejected ? selectedProfiles.slice(0, 1) : trial === "missing-profile" ? selectedProfiles : profiles)
+                .map(({ id, content }) => ({ id, digest: hash(content) })),
             });
             if (complete) {
               try {
