@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { delimiter, isAbsolute, relative, resolve, sep } from "node:path";
 
 function inside(root: string, target: string) {
   const offset = relative(root, target);
@@ -8,7 +8,7 @@ function inside(root: string, target: string) {
 
 // Hermes calls this through its fail-closed native pre_tool_call hook.
 const blocked = { action: "block", message: "This benchmark permits file access only inside its disposable fixture." };
-const allowedFiles = new Set(["read_file", "write_file", "search_files"]);
+const allowedFiles = new Set(["read_file", "write_file", "search_files", "patch"]);
 
 async function guard(workspace: string, event: { tool_name?: string; tool_input?: Record<string, unknown> }) {
   const tool = event.tool_name;
@@ -17,6 +17,15 @@ async function guard(workspace: string, event: { tool_name?: string; tool_input?
   if (tool === "skill_view" && typeof input.name === "string" && /^axiom:[a-z-]+$/.test(input.name) &&
       (input.file_path === undefined || input.file_path === "PROFILE.md")) return {};
   if (!tool || !allowedFiles.has(tool)) return blocked;
+  if (tool === "patch") {
+    if (input.mode === "patch") {
+      // Hermes checks every V4A edit target with its native parser and safe-root policy.
+      const nativeRoot = process.env.HERMES_WRITE_SAFE_ROOT;
+      if (nativeRoot !== workspace || workspace.includes(delimiter) || typeof input.patch !== "string" || !input.patch.trim()) return blocked;
+      return {};
+    }
+    if (input.mode !== undefined && input.mode !== "replace") return blocked;
+  }
   const path = input.path ?? (tool === "search_files" ? "." : undefined);
   if (typeof path !== "string" || !path.trim()) return blocked;
   const target = resolve(workspace, path);

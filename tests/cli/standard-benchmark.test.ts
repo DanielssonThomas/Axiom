@@ -148,10 +148,16 @@ test.runIf(Boolean(program) && process.platform === "linux")("starts the pinned 
   }
 }, 55_000);
 
-test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mode uses standalone profiles, guards paths and replays paired native edits", async () => {
+test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mode grades native patch edits and confines file tools to the fixture", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-hermes-account-"));
   const home = join(root, "auth");
   const canary = join(root, "private.txt");
+  const originalCommand = "export function run(rows) {\n  return String(rows.length);\n}\n";
+  const asPatch = (path: string, before: string, after: string) => ({ name: "patch", arguments: JSON.stringify({
+    mode: "patch", patch: ["*** Begin Patch", `*** Update File: ${path}`, "@@",
+      ...before.trimEnd().split("\n").map((line) => `-${line}`), ...after.trimEnd().split("\n").map((line) => `+${line}`),
+      "*** End Patch", ""].join("\n"),
+  }) });
   const credentials = JSON.stringify({ version: 1, credential_pool: {
     "openai-codex": [{ id: "fixture", label: "Fixture login", auth_type: "oauth", priority: 0, source: "manual:device_code",
       access_token: "opaque-dummy-native-oauth", refresh_token: "opaque-dummy-native-refresh" }],
@@ -160,9 +166,14 @@ test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mo
     const observed = text.includes("# Axiom Core");
     const calls = [
       ...(observed ? [{ name: "read_file", arguments: JSON.stringify({ path: canary }) },
-        { name: "write_file", arguments: JSON.stringify({ path: canary, content: "corrupt" }) }] : []),
+        { name: "write_file", arguments: JSON.stringify({ path: canary, content: "corrupt" }) },
+        { name: "patch", arguments: JSON.stringify({
+          mode: "patch", patch: `*** Begin Patch\n*** Delete File: ${canary}\n*** End Patch\n`,
+        }) }] : []),
       { name: "read_file", arguments: '{"path":"command.mjs"}' },
-      { name: "write_file", arguments: JSON.stringify({ path: "command.mjs", content: patchedCommand }) },
+      observed ? asPatch("command.mjs", originalCommand, patchedCommand) : { name: "patch", arguments: JSON.stringify({
+        path: "command.mjs", old_string: originalCommand.trimEnd(), new_string: patchedCommand.trimEnd(),
+      }) },
     ];
     return calls[toolResults.length];
   });
@@ -186,6 +197,8 @@ test.runIf(Boolean(program) && process.platform === "linux")("Hermes standard mo
         loopback: server.endpoint + "/v1",
       }) };
     });
+    const toolResults = server.requests.flatMap(({ toolResults }) => toolResults);
+    expect(toolResults.some((item) => item.includes("outside HERMES_WRITE_SAFE_ROOT"))).toBe(true);
     expect(result, JSON.stringify(result)).toMatchObject({ outcome: { status: "passed" },
       report: { qualification: { status: "blocked" }, metering: { metering: "unknown" } },
     });
