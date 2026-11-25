@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, rmdir, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -8,7 +8,7 @@ import { backendRequestSchema, backendResultSchema, usageSchema, type BenchmarkB
 import { supportedCodexHost } from "./activation.js";
 import { digest, type CodexBundle } from "./bundle.js";
 import { configureCodexProfile, observeCodexProfile } from "./profile.js";
-import { array, nativeVersion, object, runCodex, type CodexProfile } from "./process.js";
+import { array, nativeJson, nativeVersion, object, runCodex, type CodexProfile } from "./process.js";
 
 type NormalizedAction =
   | { kind: "command"; command: string; exitCode?: number }
@@ -105,6 +105,8 @@ export interface CodexBackendOptions {
   environment?: Readonly<Record<string, string>>;
   /** Reuse a native ChatGPT file-store login with an otherwise disposable home. */
   authHome?: string;
+  /** Observe local preview isolation for this reviewed native-account case. */
+  previewCaseId?: string;
 }
 
 function inside(root: string, path: string): boolean {
@@ -156,7 +158,7 @@ export async function resolveCodexAccountProgram(program: string): Promise<strin
   throw new Error("The installed Codex npm package lacks its platform executable.");
 }
 
-async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal) {
+async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal, preview: boolean) {
   const source = await realpath(authHome);
   const credential = join(source, "auth.json");
   if (inside(profile.workspace, source) || inside(source, profile.workspace) ||
@@ -170,6 +172,7 @@ async function prepareNativeAuth(profile: CodexProfile, authHome: string, archiv
   await writeFile(join(profile.home, "config.toml"), [
     'cli_auth_credentials_store = "file"',
     `default_permissions = "${standardPermissions}"`,
+    ...(preview ? ['web_search = "disabled"'] : []),
     "[features]",
     "apps = false",
     "[analytics]",
@@ -194,6 +197,17 @@ async function prepareNativeAuth(profile: CodexProfile, authHome: string, archiv
     "axiom", profile.workspace, credential, link, archive,
   ], { signal });
   if (probe.code !== 0) return "Codex could not confirm that its tool sandbox protects the credential and archive.";
+}
+
+async function hasIsolatedPreviewBoundary(profile: CodexProfile, signal: AbortSignal) {
+  const mcp = await nativeJson(profile, ["mcp", "list", "--json"], signal);
+  if (!Array.isArray(mcp) || mcp.length !== 0) return false;
+  const hostNamespace = await readlink("/proc/self/ns/net");
+  const sandbox = await runCodex(profile, ["sandbox", "-P", standardPermissions, "--include-managed-config", "-C", profile.workspace,
+    "--", "/usr/bin/readlink", "/proc/self/ns/net"], { signal });
+  const namespace = /^net:\[\d+\]$/;
+  const sandboxNamespace = sandbox.stdout.trim();
+  return sandbox.code === 0 && namespace.test(hostNamespace) && namespace.test(sandboxNamespace) && sandboxNamespace !== hostNamespace;
 }
 
 /** Translate one already-staged benchmark attempt into a bounded codex exec invocation. */
@@ -221,6 +235,8 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       const artifactsRoot = resolve(options.artifacts);
       if (inside(workspace, artifactsRoot)) return result({ status: "blocked", reason: "Codex artifacts must remain outside the disposable workspace." });
       const { authHome } = options;
+      const preview = request.caseId === options.previewCaseId;
+      if (preview && !authHome) return result({ status: "blocked", reason: "The Codex browser preview boundary requires the native-account sandbox." });
       if (authHome !== undefined && (!isAbsolute(authHome) || options.configToml !== undefined || options.environment !== undefined)) {
         return result({ status: "blocked", reason: "Supply an absolute Codex auth home without provider or environment overrides." });
       }
@@ -241,7 +257,7 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       if (authHome) {
         // Bubblewrap creates this mount on the host. Own its empty directory before Codex starts any sandbox.
         removeGitMount = await stageGitMountPoint(workspace);
-        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal);
+        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal, preview);
         if (unavailable) return result({ status: "blocked", reason: unavailable });
       }
       if (request.mode === "with_axiom") {
@@ -256,6 +272,9 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
           || !bundle.skills.every((name) => status.skills.includes(`axiom:${name}`))) {
           return result({ status: "blocked", reason: "Native Codex policy or skill loading could not be observed." });
         }
+      }
+      if (preview && !await hasIsolatedPreviewBoundary(profile, signal).catch(() => false)) {
+        return result({ status: "blocked", reason: "Codex did not establish a separate tool network and an empty MCP inventory." });
       }
       const execution = await runCodex(profile, [
         "--ask-for-approval", "never", "exec", ...(authHome ? ["--ignore-rules"] : ["--sandbox", "workspace-write"]), "--ephemeral",
@@ -276,6 +295,12 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       }
       if (execution.code !== 0 && (trace.outcome.status !== "blocked" || !Object.values(providerFailureReasons).includes(trace.outcome.reason))) {
         return result({ status: "blocked", reason: "The native Codex CLI exited before completing the attempt." });
+      }
+      if (preview && execution.code === 0 && trace.outcome.status === "passed") {
+        const location = `${request.id}.preview.json`;
+        const body = JSON.stringify({ requestId: request.id, mcpServers: 0, networkNamespace: "isolated" }) + "\n";
+        await writeFile(join(artifactsRoot, location), body, { flag: "wx", mode: 0o600 });
+        artifacts.push({ kind: "native-preview-boundary", location, digest: digest(body) });
       }
       return result(trace.outcome);
     } catch {

@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { buildClaudeBundle, createClaudeBackend, supportedVersion } from "@axiom/claude-adapter";
 import { loadBundleWorkspace } from "@axiom/bundles";
-import type { EvaluationCase, Evidence, EvidenceOutcome, Usage } from "@axiom/contracts";
+import type { EvaluationCase, EvidenceOutcome, Usage } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { unavailablePreviewCase, type GradingAction } from "@axiom/graders";
 import { assertPrivateBenchmarkPath, launchClaudeSandbox } from "./claude-sandbox.js";
@@ -15,6 +15,7 @@ import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, write
 import { prepareBenchmarkArchive, runArchivedBenchmark, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { nativeProgram } from "./native-program.js";
 import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
+import { isUnavailablePreview, recordUnavailablePreview } from "./preview-observation.js";
 
 const exec = promisify(execFile);
 const blocked = (reason: string): EvidenceOutcome => ({ status: "blocked", reason });
@@ -25,10 +26,6 @@ export const strictHostUnavailable = "The independently budgeted native route cu
 const observableGraders = new Set(["artifact.existing-formatter", "artifact.command-boundary", "artifact.canonical-model",
   "artifact.preserve-acceptance", "trace.context-discovery"]);
 
-
-function isUnavailablePreview(evaluation: { id: string; version: string }) {
-  return evaluation.id === unavailablePreviewCase.id && evaluation.version === unavailablePreviewCase.version;
-}
 
 export function supportsStrictBenchmarkCase(item: EvaluationCase) {
   return supportsClaudeClarification(item) || (item.assertions.every(({ required, grader }) => !required || observableGraders.has(grader) ||
@@ -150,14 +147,7 @@ export async function runTrustedClaude(
           if (actions && isUnavailablePreview(evaluation) && observedLocalToolSurface.has(id)) {
             // The sandbox provides loopback only to the broker and starts no browser preview.
             // The broker independently observed the launch's file/skill-only provider surface.
-            const evidence: Evidence = {
-              id: `${id}.preview-capability`, taskId: id, criterionIds: [unavailablePreviewCase.criterion],
-              source: value.source, policy: value.policy, host: value.execution.host, provenance: "observed",
-              startedAt: new Date().toISOString(), durationMs: 0, artifacts: [],
-              outcome: blocked("The fixture has no running browser preview."),
-            };
-            await store.record("acceptance", evidence);
-            actions.push({ kind: "check", evidence });
+            actions.push(await recordUnavailablePreview(store, value));
           }
           return actions;
         },

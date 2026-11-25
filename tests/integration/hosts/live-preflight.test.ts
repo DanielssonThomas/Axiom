@@ -24,7 +24,7 @@ test.each(["codex", "hermes"])("keeps strict %s qualification unavailable before
 test.runIf(process.platform === "linux").each([
   ["codex", "codex-cli 0.172.0-alpha.2", "gpt-5.4"],
   ["hermes", "Hermes Agent v0.23.3 (fixture)", "gpt-5.4"],
-])("preflights the %s reuse pair with no account access", async (host, version, model) => {
+])("preflights the %s reuse and preview pairs with no account access", async (host, version, model) => {
   const root = await mkdtemp(join(tmpdir(), "axiom-preflight-"));
   try {
     const program = join(root, host);
@@ -42,6 +42,11 @@ echo '${version}'
       limits: { plannedAttempts: 2, timeoutSeconds: 120 },
       authorization: "--allow-native", qualification: { status: "blocked" },
     } } });
+    expect(await preflight(...runtime, "--case", "report-unavailable-preview", "--max-attempts", "2")).toMatchObject({
+      code: 0, output: { status: "passed", report: { caseIds: ["report-unavailable-preview"],
+        limits: { plannedAttempts: 2 }, qualification: { status: "blocked" },
+      } },
+    });
     expect(await preflight(...runtime, "--case", "resolve-format-decision")).toMatchObject({
       code: 1, output: { status: "blocked", reason: expect.stringMatching(/cannot independently evaluate/) },
     });

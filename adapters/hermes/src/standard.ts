@@ -13,12 +13,15 @@ interface AccountBackendOptions {
   authHome: string;
   archiveDirectory: string;
   bundle: string;
+  /** Observe the effective restricted toolsets for this reviewed case. */
+  previewCaseId?: string;
   /** Credential-free native loopback tests only. The user command never supplies this. */
   loopback?: string;
 }
 
 const guard = fileURLToPath(new URL("../dist/standard-tool-guard.js", import.meta.url));
 const provider = "openai-codex";
+const accountToolsets = ["file", "skills"] as const;
 const unmetered = { metering: "unknown", reason: "Hermes account execution did not return an attempt usage record." } as const;
 
 export function createHermesAccountBackend(options: AccountBackendOptions): BenchmarkBackend {
@@ -57,6 +60,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
         _config_version: 54, gateway: { standalone: true }, hooks_auto_accept: true,
         // The native launch guard checks the named profile's configuration before resolving the default OAuth login.
         model: { provider: selectedProvider, default: request.host.model },
+        ...(request.caseId === options.previewCaseId ? { platform_toolsets: { cli: accountToolsets } } : {}),
         hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace].map((part) => JSON.stringify(part)).join(" "),
           timeout: 5, fail_closed: true }] },
       }), { mode: 0o600 });
@@ -70,7 +74,8 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       if (signal.aborted || remaining() < 1) return blocked("Hermes account execution was cancelled or exhausted its time limit.");
       const backend = new HermesBenchmarkBackend({
         executable: options.executable, profile: { home, profile }, archiveDirectory: options.archiveDirectory,
-        provider: selectedProvider, maxTurns: 8, standalone: true, toolsets: ["file", "skills"], environment: env,
+        provider: selectedProvider, maxTurns: 8, standalone: true, toolsets: accountToolsets, environment: env,
+        ...(options.previewCaseId === undefined ? {} : { previewCaseId: options.previewCaseId }),
         ...(options.loopback && { baseUrl: options.loopback }),
       });
       return await backend.run({ ...request, timeoutMs: Math.floor(remaining()) }, signal);

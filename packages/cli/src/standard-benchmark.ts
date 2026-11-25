@@ -6,10 +6,12 @@ import { assembleBundles, loadBundleWorkspace, writeBundles } from "@axiom/bundl
 import { buildCodexBundle, createCodexBackend, supportedVersion as codexVersion } from "@axiom/codex-adapter";
 import type { BenchmarkBackend, EvaluationCase, EvidenceOutcome, HostIdentity, PolicyIdentity, Usage } from "@axiom/contracts";
 import { createHermesAccountBackend, hermesBundleAdapter, hermesVersion } from "@axiom/hermes-adapter";
+import { unavailablePreviewCase } from "@axiom/graders";
 import { defaultCase, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { codexDigest } from "./native-install.js";
 import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
 import { nativeProgram } from "./native-program.js";
+import { nativePreviewActions, supportsNativePreview } from "./preview-observation.js";
 import { isCommit, prepareReviewedBaseline, requireCleanBenchmarkRevision, writeReviewedLicense, type ReviewedBaseline } from "./reviewed-baseline.js";
 
 const hosts = {
@@ -39,7 +41,8 @@ export function standardBenchmarkHost(agent: string, model?: string): HostIdenti
 }
 
 export function supportsStandardBenchmarkCase(agent: string, item: EvaluationCase) {
-  return (item.id === defaultCase && item.requiredCapabilities.length === 0) || (agent === "claude" && supportsClaudeClarification(item));
+  return (item.id === defaultCase && item.requiredCapabilities.length === 0) || (agent === "claude" && supportsClaudeClarification(item)) ||
+    ((agent === "codex" || agent === "hermes") && supportsNativePreview(item));
 }
 
 export function isSupportedStandardLimits({ timeoutSeconds, repetitions, maxAttempts }: Pick<ArchiveOptions, "timeoutSeconds" | "repetitions" | "maxAttempts">) {
@@ -55,9 +58,10 @@ interface ArmedBackend {
 
 type ConfiguredArchive = Awaited<ReturnType<typeof prepareBenchmarkArchive>>;
 type Configure = (archive: ConfiguredArchive, scratch: string) => Promise<ArmedBackend>;
+type StandardBenchmarkResult = { outcome: EvidenceOutcome; report?: Awaited<ReturnType<typeof runArchivedBenchmark>> };
 
 export async function runStandardArchive(options: StandardBenchmarkOptions, host: HostIdentity,
-  provider: "native-account" | "injected", configure: Configure, signal?: AbortSignal) {
+  provider: "native-account" | "injected", configure: Configure, signal?: AbortSignal): Promise<StandardBenchmarkResult> {
   if (!options.allowNative) return blocked("Authorize native model execution explicitly with --allow-native.");
   if (!isSupportedStandardLimits(options)) return blocked("The standard time or attempt limits are invalid.");
   const deadline = AbortSignal.timeout(options.timeoutSeconds * 1000);
@@ -79,19 +83,21 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
     cancellation.throwIfAborted();
     const plan = await configure(archive, scratch);
     const workspaces = new Map<string, string>();
+    const preview = archive.cases.some(supportsNativePreview);
     const result = await runArchivedBenchmark(archive, {
       ...plan, host, signal: cancellation,
+      ...(claude || preview ? { capabilities: [{ id: "action-trace", available: true }] as const } : {}),
       ...(claude ? {
-        capabilities: [{ id: "action-trace", available: true }] as const,
         backend: { run(request, abort) {
           workspaces.set(request.id, request.workspace);
           return plan.backend.run(request, abort);
         } },
-        async actions(evaluation, { execution }) {
-          const workspace = workspaces.get(execution.requestId);
-          return workspace === undefined ? undefined : readClaudeClarification(archive.store, execution, workspace, evaluation);
-        },
       } : {}),
+      async actions(evaluation, value) {
+        if (preview && supportsNativePreview(evaluation)) return nativePreviewActions(archive.store, value);
+        const workspace = workspaces.get(value.execution.requestId);
+        if (workspace !== undefined) return readClaudeClarification(archive.store, value.execution, workspace, evaluation);
+      },
       control: { mode: "standard", provider, hardBudgetEnforcement: "unavailable", qualification: standardQualification },
       metering: () => unknownUsage,
       assess: (report) => report.outcome,
@@ -113,6 +119,7 @@ async function configureNative(agent: Agent, program: string, authHome: string, 
   const version = "0.1.0";
   const common = { version, sourceRevision: baselineRef, policyVersion: catalog.core.version,
     selectedProfiles: profiles, checks: catalog.checks, skills };
+  const preview = archive.cases.some(supportsNativePreview) ? { previewCaseId: unavailablePreviewCase.id } : {};
   if (agent === "claude") {
     const bundle = await buildClaudeBundle({ ...common, repository, destination: scratch });
     return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest,
@@ -121,17 +128,17 @@ async function configureNative(agent: Agent, program: string, authHome: string, 
   if (agent === "codex") {
     const bundle = await buildCodexBundle({ version, source: repository, destination: scratch, catalog, profiles });
     return { policy: bundle.policy, bundleDigest: await codexDigest(bundle.root), backend: createCodexBackend({
-      program, artifacts: evidenceDirectory, bundle, authHome,
+      program, artifacts: evidenceDirectory, bundle, authHome, ...preview,
     }) };
   }
   const [bundle] = writeBundles(scratch, assembleBundles(repository, { ...common, adapters: [hermesBundleAdapter] }));
   if (!bundle) throw new Error("The benchmark Hermes bundle could not be assembled.");
   return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest, backend: createHermesAccountBackend({
-    executable: program, archiveDirectory: evidenceDirectory, bundle: bundle.directory, authHome,
+    executable: program, archiveDirectory: evidenceDirectory, bundle: bundle.directory, authHome, ...preview,
   }) };
 }
 
-export async function runStandardBenchmark(agent: string, options: StandardBenchmarkOptions, signal?: AbortSignal) {
+export async function runStandardBenchmark(agent: string, options: StandardBenchmarkOptions, signal?: AbortSignal): Promise<StandardBenchmarkResult> {
   if (!options.allowNative) return blocked("Authorize native model execution explicitly with --allow-native.");
   const selectedHost = standardBenchmarkHost(agent, options.model);
   if (!selectedHost) return blocked(standardHostUnavailable);

@@ -22,6 +22,8 @@ export interface HermesBackendOptions {
   toolsets?: readonly string[];
   /** Explicit launcher environment. Ambient provider credentials are excluded. */
   environment?: NodeJS.ProcessEnv;
+  /** Observe local preview isolation for this reviewed native-account case. */
+  previewCaseId?: string;
 }
 
 interface Trace {
@@ -211,6 +213,15 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
       if (version.code !== 0 || /Hermes Agent v([^\s)]+)/.exec(version.stdout)?.[1] !== request.host.version) {
         return blocked("The native Hermes version could not be matched to the requested version.");
       }
+      const preview = request.caseId === this.options.previewCaseId;
+      if (preview) {
+        const inventory = await runHermes({ ...base, args: [...scope, "tools", "list", "--platform", "cli"] });
+        const enabled = [...inventory.stdout.matchAll(/^\s*✓\s+enabled\s+(\S+)/gm)].map((match) => match[1]).sort();
+        if (inventory.code !== 0 || enabled.join(",") !== "file,skills" || !/^\s*✗\s+disabled\s+browser\s/m.test(inventory.stdout)
+            || this.options.toolsets?.join(",") !== "file,skills" || !this.options.standalone) {
+          return blocked("Hermes did not establish a standalone file-and-skills tool surface with browser disabled.");
+        }
+      }
       const gateway = await openHermesGateway({
         ...base, args: [...(this.options.standalone ? scope : this.options.arguments ?? []),
           "gateway", "run", "--no-supervise", "--external-supervisor"],
@@ -263,6 +274,14 @@ export class HermesBenchmarkBackend implements BenchmarkBackend {
           return result({ status: "blocked", reason: "Hermes did not observe Axiom policy loading in the benchmark session." }, evidence);
         }
         if (observed.loaded.status !== "passed") return result({ status: "blocked", reason: observed.loaded.reason }, evidence);
+      }
+      if (preview) {
+        const location = `${request.id}.preview.json`;
+        await writeFile(join(storage, location), JSON.stringify({ requestId: request.id, enabledToolsets: ["file", "skills"],
+          browser: "disabled" }) + "\n", { flag: "wx", mode: 0o600 });
+        const boundary = await new EvidenceStore(storage).artifact({ kind: "native-preview-boundary", path: location });
+        if (!boundary) return blocked("The independently observed Hermes preview boundary could not be archived.");
+        evidence.artifacts.push(boundary);
       }
       return result({ status: "passed" }, evidence);
     } catch {

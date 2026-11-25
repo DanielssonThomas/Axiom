@@ -125,4 +125,18 @@ The pinned Linux Codex sandbox uses a protected `.git` mount. An interrupted san
 
 The Hermes account benchmark supports the native file toolset's `patch` in both arms. The benchmark hook confines single-file replacements to the fixture. V4A patches use the pinned Hermes path checks with `HERMES_WRITE_SAFE_ROOT` set to that same fixture. The native regression exercises both patch forms and confirms that an outside patch target stays unchanged.
 
-Claude still needs independently observed profile application, delegated-worker delivery and parent verification, and remaining ordinary-session lifecycle evidence. Codex and Hermes need a trusted budgeted provider route and live graders for interactive clarification, verification reporting, profile application, and delegated execution. The native clarification, profile, and worker probes above establish scoped transport evidence with scripted providers. Full qualification still depends on the real-model and installed-session evidence in [#19](https://github.com/DanielssonThomas/Axiom/issues/19).
+### Next live case for Codex and Hermes
+
+Use the reviewed `report-unavailable-preview` case for one with/without-Axiom pair per host. Codex verifies the empty native MCP inventory and a separate sandbox network namespace. Hermes verifies that only file and skill toolsets are enabled and that browser automation is disabled in its native inventory. The archive ties each observation to the host and attempt. The existing grader compares `verification.json` with the saved observation and detects a false `passed` report. The case checks how an unavailable preview is reported. Actual browser interaction remains outside its scope.
+
+```sh
+BASELINE=$(git rev-parse HEAD)
+node packages/cli/dist/index.js benchmark codex --mode standard --preflight --baseline "$BASELINE" \
+  --model gpt-6-luna --case report-unavailable-preview --repetitions 1 --max-attempts 2 --timeout-seconds 120
+node packages/cli/dist/index.js benchmark hermes --mode standard --preflight --baseline "$BASELINE" \
+  --model gpt-6-luna --case report-unavailable-preview --repetitions 1 --max-attempts 2 --timeout-seconds 120
+```
+
+Use `--program` for the pinned executables and `--auth-home` for the existing Codex and private Linux Hermes logins if they are outside the default locations. The preview pair needs authorization for two GPT-6 Luna attempts and 120 seconds per host using the signed-in account's quota. After approval, replace `--preflight` with `--allow-native` and replay each private evidence archive. The standard routes have time and attempt limits. Aggregate provider usage and a hard token or dollar cap are unavailable. [Benchmark replay](install.md#review-the-saved-evidence)
+
+Claude still needs independently observed profile application, delegated-worker delivery and parent verification, and remaining ordinary-session lifecycle evidence. Codex and Hermes still need a trusted budgeted provider route and independently graded live evidence for interactive clarification, profile application, delegated execution, and remaining lifecycle behavior. The native clarification, profile, and worker probes above establish scoped transport evidence with scripted providers. Full qualification depends on the real-model and installed-session evidence in [#19](https://github.com/DanielssonThomas/Axiom/issues/19).
