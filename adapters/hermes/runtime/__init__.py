@@ -360,7 +360,11 @@ def register(ctx):
     if bundle != profile / "plugins" / "axiom" or profile.parent.name != "profiles":
         raise ValueError("Axiom requires installation in the selected named Hermes profile.")
     manifest = json.loads((bundle / "axiom-bundle.json").read_text(encoding="utf-8"))
-    identity = manifest["digest"]
+    identity = manifest.pop("digest")
+    # The bundle assembler hashes JSON.stringify(metadata) in manifest field order.
+    metadata = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if _digest(metadata) != identity:
+        raise ValueError("The Hermes bundle inventory does not match its identity.")
     instance = _installation(bundle)
     checker_digest = next(record["digest"] for record in manifest["files"] if record["path"] == "checker.mjs")
     files = {record["path"]: record["digest"] for record in manifest["files"]}
