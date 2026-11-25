@@ -56,6 +56,11 @@ for (const [agent, binary, surface, caseId] of [
       expect(server.requests.every(({ model: served }) => served === model)).toBe(true);
       expect(server.requests.some(({ text }) => text.includes("# Axiom Core"))).toBe(true);
       expect(server.requests.some(({ text }) => !text.includes("# Axiom Core"))).toBe(true);
+      const resumed = server.requests.find(({ text, toolResults }) => text.includes("# Axiom Core") && toolResults.length === 2);
+      expect(resumed).toBeDefined();
+      const response = JSON.parse(resumed!.toolResults[1]!);
+      if (agent === "codex") expect(response).toEqual({ answers: {} });
+      else expect(response).toMatchObject({ responses: [{ status: "skipped", user_response: null }] });
       const tool = agent === "codex" ? "request_user_input" : "clarify";
       const initial = server.requests.filter(({ toolResults }) => toolResults.length === 0);
       expect(initial).toHaveLength(2);

@@ -195,22 +195,30 @@ interface ArchivedRuntime {
 export async function runArchivedBenchmark(archive: PreparedArchive, runtime: ArchivedRuntime) {
   const { options, repository, store, evidenceDirectory, revision, baselineRef, baseline, caseIds } = archive;
   const observations: BenchmarkArchive["observations"] = {};
+  const modes = new Map<string, BenchmarkAttempt["mode"]>();
   const report = await runBenchmark({
     host: runtime.host, policy: runtime.policy, fixtureRoot: baseline.directory, catalog: archive.catalog, caseIds, store,
     capabilities: runtime.capabilities ?? [],
     limits: { timeoutMs: options.timeoutSeconds * 1000, maxAttempts: options.maxAttempts ?? caseIds.length * 2 * options.repetitions,
       maxConcurrency: 1 },
     repetitions: options.repetitions, signal: runtime.signal,
-    openRuntime: openNativeRuntime(runtime.control.mode === "strict" ? "isolated" : "native", runtime.backend),
+    openRuntime: openNativeRuntime(runtime.control.mode === "strict" ? "isolated" : "native", {
+      run(request, signal) {
+        modes.set(request.id, request.mode);
+        return runtime.backend.run(request, signal);
+      },
+    }),
     grader: {
       version: "1", digest: archive.grader,
       async grade(evaluation, value, signal) {
+        const mode = modes.get(value.execution.requestId);
+        if (!mode) throw new Error("The grading observation has no matching backend request.");
         const actions = await runtime.actions?.(evaluation, value, signal);
         const grading = { before: value.before, after: value.after, source: value.source, policy: value.policy,
           ...(actions === undefined ? {} : { actions }) };
         const assertions = gradeCase(evaluation, grading);
         const location = `${value.execution.requestId}.grading.json`;
-        const bytes = JSON.stringify({ evaluation, ...grading, before: [...value.before], after: [...value.after], assertions }) + "\n";
+        const bytes = JSON.stringify({ evaluation, mode, ...grading, before: [...value.before], after: [...value.after], assertions }) + "\n";
         await writeFile(join(evidenceDirectory, location), bytes, { flag: "wx", mode: 0o600 });
         observations[value.execution.requestId] = { location, digest: sha256(bytes) };
         return { source: value.source, assertions };

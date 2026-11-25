@@ -63,6 +63,7 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
       const value = JSON.parse(await readFile(join(directory, observed.location), "utf8")) as Record<string, unknown>;
       const evaluation = catalog.find(({ id, version }) => id === attempt.case.id && version === attempt.case.version);
       if (!evaluation || !isDeepStrictEqual(value.evaluation, evaluation)) throw new Error("Saved case differs from the reviewed case.");
+      if (saved.results !== undefined && value.mode !== attempt.mode) throw new Error("Saved arm differs from the observed request.");
       const source = sourceIdentitySchema.parse(value.source);
       const policy = policyIdentitySchema.parse(value.policy);
       if (!isDeepStrictEqual(source, attempt.source) || !isDeepStrictEqual(policy, saved.report.policy)) {
@@ -83,6 +84,15 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
         ...(actions === undefined ? {} : { actions }),
       });
       if (!isDeepStrictEqual(assertions, value.assertions)) throw new Error("Independent grading differs from the recorded observation.");
+      const descriptors = attempt.assertions.map(({ id, grader, required }) => ({ id, grader, required }));
+      const expected = evaluation.assertions.map(({ id, grader, required }) => ({ id, grader, required }));
+      if (!isDeepStrictEqual(descriptors, expected)) throw new Error("Saved assertion controls differ from the reviewed case.");
+      if (attempt.outcome.status === "passed" || attempt.outcome.status === "failed") {
+        const required = assertions.filter(({ criterionId }) => expected.some(({ id, required }) => required && id === criterionId));
+        const status = required.some(({ outcome }) => outcome.status === "failed") ? "failed"
+          : required.length > 0 && required.every(({ outcome }) => outcome.status === "passed") ? "passed" : "incomplete";
+        if (attempt.outcome.status !== status) throw new Error("The attempted result differs from its required independent grades.");
+      }
       for (const assertion of assertions) {
         const item = attempt.assertions.find(({ id }) => id === assertion.criterionId);
         if (!item?.evidenceId) throw new Error("An assertion receipt is missing.");
