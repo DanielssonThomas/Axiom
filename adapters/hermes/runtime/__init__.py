@@ -281,17 +281,32 @@ def _profile_index(ctx, bundle, manifest):
     return skills, "\n\n".join(index)
 
 
-def _inherited_profiles(bundle, profile_ids):
-    extends = {
-        name: json.loads((bundle / "profiles" / name / "profile.json").read_text(encoding="utf-8"))["extends"]
-        for name in profile_ids
-    }
+def _inherited_profiles(bundle, profile_ids, files):
+    extends = {}
+    for name in profile_ids:
+        if not isinstance(name, str) or not PROFILE_ID.fullmatch(name):
+            raise ValueError("Invalid Hermes profile identity in the bundle.")
+        relative = f"profiles/{name}/profile.json"
+        path = bundle / relative
+        if path.resolve() != path or not path.is_file():
+            raise ValueError("Hermes profile definition is not an installed bundle file.")
+        contents = path.read_bytes()
+        if _digest(contents) != files[relative]:
+            raise ValueError("Hermes profile definition differs from the bundle inventory.")
+        definition = json.loads(contents)
+        parents = definition.get("extends", [])
+        if (definition.get("id") != name or not isinstance(parents, list)
+                or any(not isinstance(parent, str) or parent not in profile_ids for parent in parents)):
+            raise ValueError("Invalid Hermes profile inheritance.")
+        extends[name] = parents
     inherited = {}
     for name in extends:
         parents = set()
         pending = list(extends[name])
         while pending:
             parent = pending.pop()
+            if parent == name:
+                raise ValueError("Cyclic Hermes profile inheritance.")
             if parent not in parents:
                 parents.add(parent)
                 pending.extend(extends[parent])
@@ -348,6 +363,9 @@ def register(ctx):
     identity = manifest["digest"]
     instance = _installation(bundle)
     checker_digest = next(record["digest"] for record in manifest["files"] if record["path"] == "checker.mjs")
+    files = {record["path"]: record["digest"] for record in manifest["files"]}
+    profile_ids = [reference["id"] for reference in manifest["policy"]["profiles"]]
+    inherits = _inherited_profiles(bundle, profile_ids, files)
 
     folder = profile / ".axiom-hermes"
     if folder.exists() and folder.resolve() != folder:
@@ -358,8 +376,6 @@ def register(ctx):
         ctx.register_skill(name, entrypoint, description=_description(entrypoint))
 
     profile_skills, index = _profile_index(ctx, bundle, manifest)
-    inherits = _inherited_profiles(bundle, profile_skills.values())
-    files = {record["path"]: record["digest"] for record in manifest["files"]}
     profile_fingerprints = [{"id": profile_id, "digest": files[f"profiles/{profile_id}/PROFILE.md"]}
                             for profile_id in sorted(profile_skills.values())]
     core = (bundle / "core" / "AXIOMS.md").read_text(encoding="utf-8").rstrip("\n")
