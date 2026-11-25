@@ -6,9 +6,28 @@ import type { GradingAction } from "@axiom/graders";
 import { sha256 } from "./reviewed-baseline.js";
 
 const topics = new Map([
-  ["clarify-material-decision", { topic: "target audience", subject: /\baudiences?\b|(?=.*\bdashboard\b)(?=.*\bconsole\b)/i }],
-  ["resolve-format-decision", { topic: "report format", subject: /\bformat\b/i }],
+  ["clarify-material-decision", { topic: "target audience", subject: /\baudiences?\b|(?=.*\bdashboard\b)(?=.*\bconsole\b)/i,
+    alternatives: [/\bdashboard\b|\bjson array\b/i, /\bconsole\b|\bnewline[- ]delimited\b/i] as const }],
+  ["resolve-format-decision", { topic: "report format", subject: /\bformat\b/i,
+    alternatives: [/\bcsv\b|\bfinance importer\b/i, /\bjson\b|\boperational importer\b/i] as const }],
 ]);
+
+function distinguishesAlternatives(choices: readonly string[], [first, second]: readonly [RegExp, RegExp]) {
+  if (choices.length !== 2) return false;
+  const sides = choices.map((label) => {
+    if (label.length > 256) return undefined;
+    const matchesFirst = first.test(label);
+    const matchesSecond = second.test(label);
+    return matchesFirst === matchesSecond ? undefined : matchesFirst;
+  });
+  return sides.includes(true) && sides.includes(false);
+}
+
+function asksWhatToDeliver(question: string) {
+  const delivery = /\bshould (?:(?:I|we|the (?:[\w-]+ ){0,4}(?:report|summary|output|export|command|change|feature)) )?(?:choose|use|implement|deliver|produce|generate|emit|return|support|target|ship|serve|provide|output|be (?:used|implemented|delivered|produced|supported))\b/i;
+  const preference = /\b(?:(?:do you (?:want|prefer)|is (?:preferred|intended))(?: (?:for|as) [^?]+)?)\?$/i;
+  return delivery.test(question) || preference.test(question);
+}
 
 export function supportsClarification(item: EvaluationCase): boolean {
   const required = item.assertions.filter((assertion) => assertion.required);
@@ -20,14 +39,16 @@ export function supportsClarification(item: EvaluationCase): boolean {
 export function clarificationTopic(caseId: string) {
   const rule = topics.get(caseId);
   if (rule === undefined) return;
-  return (question: string) => {
+  return (question: string, choices: readonly string[] = []) => {
     const text = question.trim();
     const asksForChoice = /^(?:(?:could|can|would) you (?:clarify|confirm|tell me) )?(?:which|what|who)\b/i.test(text)
       || /^should\b.*\bor\b/i.test(text);
     const appliesToOutput = /\b(?:report|summary|output|export)\b/i.test(text);
     const requestsDecision = /\b(?:should|choose|preferred|intended|target|do you (?:want|prefer))\b/i.test(text);
-    return text.length <= 512 && text.endsWith("?") && asksForChoice && appliesToOutput && requestsDecision
-      && rule.subject.test(text) ? rule.topic : undefined;
+    if (text.length > 512 || !text.endsWith("?") || !asksForChoice || !appliesToOutput || !requestsDecision) return;
+    if (rule.subject.test(text) || (asksWhatToDeliver(text) && distinguishesAlternatives(choices, rule.alternatives))) {
+      return rule.topic;
+    }
   };
 }
 

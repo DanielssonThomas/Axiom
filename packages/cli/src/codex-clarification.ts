@@ -56,8 +56,10 @@ export function codexClarificationActions(messages: readonly unknown[], turn: Cl
     if (typeof id === "string" ? !id.length : !Number.isSafeInteger(id)) continue;
     if (pending.has(id) || resolved.has(id)) return;
     pending.add(id);
-    for (const { question } of params.questions.map(record)) {
-      const topic = typeof question === "string" ? classify(question) : undefined;
+    for (const { question, options } of params.questions.map(record)) {
+      if (typeof question !== "string") continue;
+      const labels = Array.isArray(options) ? options.map((option: unknown) => record(option).label) : [];
+      const topic = classify(question, labels.every((label) => typeof label === "string") ? labels : []);
       if (topic) actions.push({ action: { kind: "ask", topic }, requestId: id });
     }
   }

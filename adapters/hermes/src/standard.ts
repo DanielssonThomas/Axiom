@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BenchmarkBackend, EvidenceOutcome } from "@axiom/contracts";
 import { HermesBenchmarkBackend } from "./backend.js";
-import { runHermesClarification } from "./clarification.js";
+import { runHermesClarification, type HermesClarificationClassifier } from "./clarification.js";
 import { changeHermesPlugin, profileDirectory } from "./profile.js";
 import { runHermes } from "./process.js";
 import { hermesVersion } from "./bundle.js";
@@ -16,7 +16,7 @@ interface AccountBackendOptions {
   bundle: string;
   /** Observe the effective restricted toolsets for this reviewed case. */
   previewCaseId?: string;
-  clarification?: (caseId: string) => ((question: string) => string | undefined) | undefined;
+  clarification?: (caseId: string) => HermesClarificationClassifier | undefined;
   /** Credential-free native loopback tests only. The user command never supplies this. */
   loopback?: string;
 }

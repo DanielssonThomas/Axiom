@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import type { BackendRequest } from "@axiom/contracts";
 import { openHermesGateway } from "./process.js";
 
 type Launch = Parameters<typeof openHermesGateway>[0];
 type Action = { kind: "read" | "edit"; path: string } | { kind: "ask"; topic: string };
-interface Prompt { id: string; generation: number; question: string }
+interface Prompt { id: string; generation: number; question: string; choices: string[] }
+export type HermesClarificationClassifier = (question: string, choices: readonly string[]) => string | undefined;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
@@ -32,7 +34,7 @@ export async function localHermesPort() {
 }
 
 function observations(events: readonly Record<string, unknown>[], receipts: readonly Record<string, unknown>[],
-  answered: ReadonlyMap<string, Prompt>, classify: (question: string) => string | undefined): Action[] | undefined {
+  answered: ReadonlyMap<string, Prompt>, classify: HermesClarificationClassifier): Action[] | undefined {
   const actions: Action[] = [];
   const seen = new Set<string>();
   const tools = new Map<unknown, Record<string, unknown>>();
@@ -49,13 +51,14 @@ function observations(events: readonly Record<string, unknown>[], receipts: read
     }
     if (event.event !== "clarify.request" || typeof event.prompt_id !== "string") continue;
     const prompt = answered.get(event.prompt_id);
-    if (!prompt || seen.has(prompt.id) || event.question !== prompt.question || event.execution_generation !== prompt.generation) return;
+    if (!prompt || seen.has(prompt.id) || event.question !== prompt.question ||
+        !isDeepStrictEqual(event.choices, prompt.choices) || event.execution_generation !== prompt.generation) return;
     const settled = events.findIndex((next, position) => position > index && next.event === "clarify.settled" &&
       next.prompt_id === prompt.id && next.execution_generation === prompt.generation);
     if (settled < 0 || !events.slice(settled + 1).some((next) =>
       next.event === "tool.completed" && next.tool === "clarify" && next.error === false)) return;
     seen.add(prompt.id);
-    const topic = classify(prompt.question.replace(/\nReply "skip" to skip this question\.$/, ""));
+    const topic = classify(prompt.question.replace(/\nReply "skip" to skip this question\.$/, ""), prompt.choices);
     if (topic) actions.push({ kind: "ask", topic });
   }
   if (seen.size !== answered.size) return;
@@ -63,7 +66,7 @@ function observations(events: readonly Record<string, unknown>[], receipts: read
 }
 
 export async function runHermesClarification(launch: Launch, directory: string, profile: string, request: BackendRequest,
-  provider: string, observation: string, classify: (question: string) => string | undefined) {
+  provider: string, observation: string, classify: HermesClarificationClassifier) {
   const port = await localHermesPort();
   const key = randomUUID();
   const gateway = await openHermesGateway({
@@ -109,16 +112,17 @@ export async function runHermesClarification(launch: Launch, directory: string, 
       if (Array.isArray(state.pending_controls) && state.pending_controls.length) {
         if (!admission || state.pending_controls.length !== 1) return;
         const pending = record(state.pending_controls[0]);
-        const { prompt_id, execution_generation, question } = pending;
+        const { prompt_id, execution_generation, question, choices } = pending;
         if (pending.kind !== "clarify" || typeof prompt_id !== "string" || !/^[a-f0-9]+$/.test(prompt_id) ||
             typeof execution_generation !== "number" || !Number.isSafeInteger(execution_generation) ||
-            execution_generation !== state.execution_generation || typeof question !== "string") return;
+            execution_generation !== state.execution_generation || typeof question !== "string" ||
+            !Array.isArray(choices) || !choices.every((choice: unknown) => typeof choice === "string")) return;
         if (!answered.has(prompt_id)) {
           const settled = record(await (await json(route + "/clarify", {
             request_id: prompt_id, execution_generation, answer: "",
           })).json());
           if (settled.status !== "resolved" || settled.run_id !== run || settled.prompt_id !== prompt_id) return;
-          answered.set(prompt_id, { id: prompt_id, question, generation: execution_generation });
+          answered.set(prompt_id, { id: prompt_id, question, choices, generation: execution_generation });
         }
       }
       await delay(50, undefined, { signal });
