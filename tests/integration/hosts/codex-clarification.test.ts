@@ -38,14 +38,21 @@ test.runIf(executable && (process.platform === "linux" || windows))(
     const prompt = windows ? "Inspect the disposable report format question fixture." : evaluation.prompt;
     const fixtureName = windows ? "report.txt" : "issue.txt";
     const fixture = windows ? "The report format is undecided.\n" : await readFile(join(source, evaluation.fixture, fixtureName), "utf8");
-    const askRequestCount = windows ? 1 : 2;
+    const askRequestCount = windows ? 1 : 3;
     const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-codex-app-clarify-")));
     const userHome = join(root, "user");
     const profile = { program: executable!, workspace: join(root, "fixture"), home: join(root, "codex"), userHome,
       ...(windows && { environment: windowsCodexEnvironment(userHome) }) };
+    const canary = join(profile.home, "private-observation-canary");
+    const boundaryMarker = "axiom-plan-boundary-confirmed";
     const loopback = await openLoopback("codex", model, ({ text, toolResults }) => {
       if (!text.includes(prompt)) return;
-      if (!windows && toolResults.length === 0) return { name: "exec_command", arguments: JSON.stringify({ cmd: "cat issue.txt" }) };
+      if (!windows && toolResults.length === 0) {
+        const path = "'" + canary.replaceAll("'", "'\\''") + "'";
+        const cmd = `test -r issue.txt && ! test -w . && ! test -r ${path} && printf '%s\\n' '${boundaryMarker}'`;
+        return { name: "exec_command", arguments: JSON.stringify({ cmd }) };
+      }
+      if (!windows && toolResults.length === 1) return { name: "exec_command", arguments: JSON.stringify({ cmd: "cat issue.txt" }) };
       if (toolResults.length === askRequestCount - 1) return { name: "request_user_input", arguments: JSON.stringify({ questions }) };
     });
     const stop = new AbortController();
@@ -57,10 +64,19 @@ test.runIf(executable && (process.platform === "linux" || windows))(
       await Promise.all([mkdir(profile.home), mkdir(profile.userHome), mkdir(profile.workspace)]);
       const project = join(profile.workspace, fixtureName);
       await writeFile(project, fixture);
+      if (!windows) await writeFile(canary, "synthetic boundary canary");
       await writeFile(join(profile.home, "config.toml"), [
-        'model_provider = "fixture"', "[model_providers.fixture]", 'name = "Disposable fixture"',
+        'model_provider = "fixture"',
+        ...(!windows ? ['default_permissions = "axiom-clarification"', 'web_search = "disabled"'] : []),
+        "[model_providers.fixture]", 'name = "Disposable fixture"',
         `base_url = "${loopback.endpoint}/v1"`, 'wire_api = "responses"', "requires_openai_auth = false",
-        "request_max_retries = 0", "stream_max_retries = 0", "", ...(windows ? [windowsSandbox] : []),
+        "request_max_retries = 0", "stream_max_retries = 0", "",
+        ...(windows ? [windowsSandbox] : [
+          "[features]", "apps = false", "[permissions.axiom-clarification.filesystem]", '":minimal" = "read"',
+          '":workspace_roots" = "read"', `${JSON.stringify(profile.program)} = "read"`, '"/usr/bin/cat" = "read"',
+          "[permissions.axiom-clarification.network]", "enabled = false", "[shell_environment_policy]", 'inherit = "none"',
+          "[shell_environment_policy.set]", 'PATH = "/usr/bin:/bin"', "",
+        ]),
       ].join("\n"));
       expect(await nativeVersion(profile, signal)).toBe(supportedVersion);
       const { catalog } = loadBundleWorkspace(source);
@@ -92,7 +108,7 @@ test.runIf(executable && (process.platform === "linux" || windows))(
       expect((await receive(({ id }) => id === 1)).result).toBeDefined();
       client!({ method: "initialized" });
       client!({ id: 2, method: "thread/start", params: { cwd: profile.workspace, model,
-        approvalPolicy: "never", sandbox: "read-only", ephemeral: true } });
+        approvalPolicy: "never", ...(windows && { sandbox: "read-only" }), ephemeral: true } });
       const threadId = (await receive(({ id }) => id === 2)).result?.thread?.id;
       expect(threadId).toBeTruthy();
       client!({ id: 3, method: "turn/start", params: { threadId, input: [{ type: "text", text: prompt }],
@@ -106,6 +122,10 @@ test.runIf(executable && (process.platform === "linux" || windows))(
         params: { threadId, turnId, itemId: `call_fixture_${askRequestCount}`, isBlocking: true, questions } });
       expect(loopback.requests).toHaveLength(askRequestCount);
       expect(loopback.requests[0]!.text.includes(bundle.instructions)).toBe(true);
+      if (!windows) {
+        expect(loopback.requests[1]!.toolResults[0]).toContain(boundaryMarker);
+        expect(loopback.requests[2]!.toolResults[1]).toContain(fixture.trim());
+      }
 
       client!({ id: Number(ask.id) + 100, result: { answers: { format: { answers: ["CSV"] } } } });
       await delay(300, undefined, { signal });
@@ -133,6 +153,10 @@ test.runIf(executable && (process.platform === "linux" || windows))(
         bundleDigest: await codexDigest(bundle.root), policy: bundle.policy,
         mechanism: "installed AGENTS.md observed in the native Responses request and correlated blocking app-server input",
         transport: { status: "passed" },
+        ...(!windows && {
+          workspaceBoundary: { status: "passed", scope: "read-only fixture and inaccessible synthetic private file" },
+          independentGrade: { status: "passed", caseId: evaluation.id },
+        }),
         realModelClarification: { status: "not_run", reason: "This fixture used a scripted localhost provider." },
         qualification: { status: "blocked", reason: "External model evidence is required." } }) + "\n");
     } finally {
