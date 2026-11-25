@@ -24,12 +24,14 @@ for (const [agent, binary, surface, caseId] of [
         : { name: "read_file", arguments: JSON.stringify({ path: "issue.txt" }) };
       if (toolResults.length !== 1 || !text.includes("# Axiom Core")) return;
       if (agent === "codex") return { name: "request_user_input", arguments: JSON.stringify({ questions: [{
-        id: "format", header: "Choose output", question: "Which output should I choose?", options: [
+        id: "format", header: "Choose output",
+        question: "Which output should I implement for the first export? Each importer rejects the other.", options: [
           { label: "CSV", description: "Comma-delimited data" }, { label: "JSON", description: "JSON array" },
         ],
       }] }) };
       return { name: "clarify", arguments: JSON.stringify({ questions: [{
-        question: "Which output should I choose?", choices: ["Dashboard (Recommended)", "Console"],
+        question: "Which output should I implement for the summary? Each consumer rejects the other.",
+        choices: ["Dashboard (Recommended)", "Console"],
       }] }) };
     });
     try {

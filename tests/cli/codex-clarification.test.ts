@@ -33,13 +33,16 @@ test("captures a confirmed native clarification after its completed issue read",
 });
 
 test.each([
-  ["resolve-format-decision", ["CSV (Recommended)", "JSON array"], "report format"],
-  ["clarify-material-decision", ["Operations dashboard (JSON array)", "Console operators"], "target audience"],
-] as const)("recognizes the %s decision in the native options", (caseId, labels, topic) => {
-  const question = { ...ask, params: { ...ask.params, questions: [{
-    question: "Which output should I choose?", options: labels.map((label) => ({ label })),
+  ["resolve-format-decision", "Which output should I choose?", ["CSV (Recommended)", "JSON array"], "report format"],
+  ["resolve-format-decision", "Which output should I implement for the first export? Each importer rejects the other.",
+    ["CSV", "JSON"], "report format"],
+  ["clarify-material-decision", "Which output should I choose?",
+    ["Operations dashboard (JSON array)", "Console operators"], "target audience"],
+] as const)("recognizes the %s decision in %s", (caseId, question, labels, topic) => {
+  const input = { ...ask, params: { ...ask.params, questions: [{
+    question, options: labels.map((label) => ({ label })),
   }] } };
-  expect(codexClarificationActions([read, question, resolved, complete], { ...turn, caseId })).toEqual([
+  expect(codexClarificationActions([read, input, resolved, complete], { ...turn, caseId })).toEqual([
     { kind: "read", path: "issue.txt" }, { kind: "ask", topic },
   ]);
 });
@@ -51,6 +54,8 @@ test.each([
   ["Which test should I run?", ["CSV", "JSON"]],
   ["Which output should I inspect first?", ["CSV", "JSON"]],
   ["Which output do you prefer I compare first?", ["CSV", "JSON"]],
+  ["Which test should I run? The report format is undecided.", ["CSV", "JSON"]],
+  ["Which output should I choose? Should I run the tests first?", ["CSV", "JSON"]],
 ] as const)("rejects unrelated or ambiguous native options in %s", (question, labels) => {
   const input = { ...ask, params: { ...ask.params, questions: [{
     question, options: labels.map((label) => ({ label })),

@@ -39,14 +39,24 @@ export function supportsClarification(item: EvaluationCase): boolean {
 export function clarificationTopic(caseId: string) {
   const rule = topics.get(caseId);
   if (rule === undefined) return;
-  return (question: string, choices: readonly string[] = []) => {
-    const text = question.trim();
+  return (question: string, choices?: readonly string[]) => {
+    let text = question.trim();
+    if (text.length > 512) return;
+    let hasTrailingContext = false;
+    if (choices !== undefined) {
+      const firstMark = text.indexOf("?");
+      if (firstMark < 0 || firstMark !== text.lastIndexOf("?")) return;
+      hasTrailingContext = firstMark < text.length - 1;
+      if (hasTrailingContext && !/\s/u.test(text.charAt(firstMark + 1))) return;
+      text = text.slice(0, firstMark + 1);
+    }
     const asksForChoice = /^(?:(?:could|can|would) you (?:clarify|confirm|tell me) )?(?:which|what|who)\b/i.test(text)
       || /^should\b.*\bor\b/i.test(text);
     const appliesToOutput = /\b(?:report|summary|output|export)\b/i.test(text);
     const requestsDecision = /\b(?:should|choose|preferred|intended|target|do you (?:want|prefer))\b/i.test(text);
-    if (text.length > 512 || !text.endsWith("?") || !asksForChoice || !appliesToOutput || !requestsDecision) return;
-    if (rule.subject.test(text) || (asksWhatToDeliver(text) && distinguishesAlternatives(choices, rule.alternatives))) {
+    if (!text.endsWith("?") || !asksForChoice || !appliesToOutput || !requestsDecision) return;
+    if ((!hasTrailingContext && rule.subject.test(text)) ||
+        (choices && asksWhatToDeliver(text) && distinguishesAlternatives(choices, rule.alternatives))) {
       return rule.topic;
     }
   };
