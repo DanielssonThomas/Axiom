@@ -144,11 +144,21 @@ test.each([
     expect(replay).toMatchObject({ outcome: { status: "passed" }, report: { results, benchmarkOutcome: { status: "failed" } } });
     const receipt = join(result.report.evidenceDirectory, "benchmark.json");
     const archived = JSON.parse(await readFile(receipt, "utf8"));
-    archived.results.behavior.without_axiom = { status: "blocked", reason: "Forged summary result." };
-    const altered = JSON.stringify(archived);
-    await writeFile(receipt, altered);
-    const digest = `sha256:${createHash("sha256").update(altered).digest("hex")}`;
-    expect((await reviewNativeBenchmark(repository, result.report.evidenceDirectory, digest)).outcome.status).toBe("blocked");
+    const replayAltered = async (value: unknown) => {
+      const altered = JSON.stringify(value);
+      await writeFile(receipt, altered);
+      const digest = `sha256:${createHash("sha256").update(altered).digest("hex")}`;
+      return reviewNativeBenchmark(repository, result.report!.evidenceDirectory, digest);
+    };
+    const inconsistent = structuredClone(archived);
+    inconsistent.results.behavior.without_axiom = { status: "blocked", reason: "Forged summary result." };
+    expect((await replayAltered(inconsistent)).outcome.status).toBe("blocked");
+    if (comparison === "improved") {
+      archived.report.attempts[1].outcome = { status: "passed" };
+      archived.results.behavior.without_axiom = { status: "passed" };
+      archived.results.comparisons[0].outcome = "same";
+      expect((await replayAltered(archived)).outcome.status).toBe("blocked");
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
