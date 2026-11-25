@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { benchmarkReadiness, defaultBenchmarkLimits, defaultCase, runTrustedClaude } from "../../../packages/cli/dist/native-benchmark.js";
 import { unavailablePreviewCase } from "../../../evals/graders/dist/index.js";
-import { anthropicMessages } from "../../../packages/cli/dist/provider-budget.js";
+import { anthropicMessages } from "../../../packages/cli/dist/claude-provider.js";
 
 export const claudeQualificationCases = Object.freeze([
   defaultCase, unavailablePreviewCase.id, "clarify-material-decision", "resolve-format-decision",
@@ -21,7 +21,6 @@ export default {
       model: trial.model,
       allowPaid: true,
       caseIds: claudeQualificationCases,
-      tokenBudget: trial.tokenLimit,
       timeoutSeconds: Number(process.env.AXIOM_TIMEOUT_MINUTES) * 60,
       ...(process.env.AXIOM_CLAUDE_PROGRAM ? { program: process.env.AXIOM_CLAUDE_PROGRAM } : {}),
       evidenceDirectory: join(process.env.RUNNER_TEMP, "axiom-evidence"),

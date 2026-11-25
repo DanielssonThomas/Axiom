@@ -8,7 +8,7 @@ import { expect, test, vi } from "vitest";
 import { launchClaudeSandbox } from "../../packages/cli/src/claude-sandbox.js";
 import { reviewNativeBenchmark } from "../../packages/cli/src/benchmark-review.js";
 import { defaultBenchmarkLimits, runNativeBenchmark, runTrustedClaude } from "../../packages/cli/src/native-benchmark.js";
-import { benchmarkModel, openProviderBudget } from "../../packages/cli/src/provider-budget.js";
+import { benchmarkModel, openClaudeProvider } from "../../packages/cli/src/claude-provider.js";
 import { benchmarkRevision, prepareReviewedBaseline, requireCleanBenchmarkRevision } from "../../packages/cli/src/reviewed-baseline.js";
 import { openLoopback } from "../integration/hosts/loopback.js";
 
@@ -65,7 +65,7 @@ test.runIf(sandbox)("the sandbox hides verifier files and credentials and denies
   const denied = createServer((client) => client.end("should never reach the sandbox"));
   await new Promise<void>((resolve) => denied.listen(0, "127.0.0.1", resolve));
   const { port } = denied.address() as { port: number };
-  const broker = await openProviderBudget(join(folder, "budget.sock"), 300_000, 100, async () => {
+  const broker = await openClaudeProvider(join(folder, "provider.sock"), async () => {
     throw new Error("a connectivity probe must never issue model calls");
   });
   try {
@@ -86,7 +86,7 @@ test.runIf(sandbox)("the sandbox hides verifier files and credentials and denies
 });
 
 const program = process.env.AXIOM_TEST_CLAUDE_BINARY;
-test.runIf(sandbox && program)("runs paired pinned Claude trials through the isolated budget and independent grader", async () => {
+test.runIf(sandbox && program)("runs paired pinned Claude trials through the isolated provider and independent grader", async () => {
   const repository = process.cwd();
   const revision = await benchmarkRevision(repository);
   const temporary = await mkdtemp("/tmp/axiom-isolated-trials-");

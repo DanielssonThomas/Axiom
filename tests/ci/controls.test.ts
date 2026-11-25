@@ -13,7 +13,7 @@ const repository = new URL("../../", import.meta.url);
 const env = {
   AXIOM_HOST: "codex", AXIOM_MODEL: "fixture-model", AXIOM_OS: "linux",
   AXIOM_BASELINE_REF: "a".repeat(40), AXIOM_BASELINE_DIGEST: `sha256:${"b".repeat(64)}`,
-  AXIOM_ATTEMPTS: "2", AXIOM_TIMEOUT_MINUTES: "1", AXIOM_TOKEN_BUDGET: "100",
+  AXIOM_ATTEMPTS: "2", AXIOM_TIMEOUT_MINUTES: "1",
 };
 const request = () => parseLiveInputs(env);
 const supported = { status: "passed" } as const;
@@ -83,11 +83,11 @@ test("the strict installed-host batch includes reuse, verification reporting, an
 });
 
 test("requires a complete immutable host selection and bounded numeric limits", () => {
-  expect(request()).toMatchObject({ host: "codex", model: "fixture-model", os: "linux", attempts: 2, tokenBudget: 100 });
+  expect(request()).toMatchObject({ host: "codex", model: "fixture-model", os: "linux", attempts: 2 });
   for (const invalid of [
     { AXIOM_HOST: "other" }, { AXIOM_MODEL: "x; output" }, { AXIOM_OS: "unknown" },
     { AXIOM_BASELINE_REF: "main" }, { AXIOM_BASELINE_DIGEST: "unknown" },
-    { AXIOM_ATTEMPTS: "0" }, { AXIOM_TIMEOUT_MINUTES: "21" }, { AXIOM_TOKEN_BUDGET: "NaN" },
+    { AXIOM_ATTEMPTS: "0" }, { AXIOM_TIMEOUT_MINUTES: "21" },
   ]) expect(() => parseLiveInputs({ ...env, ...invalid })).toThrow();
 });
 
@@ -153,26 +153,21 @@ test("rejects an empty or excessive direct run plan before the runner is opened"
   }
 });
 
-test("preserves results, spends a shrinking explicit token budget and stops when it is exhausted", async () => {
+test("runs all authorized attempts and records available usage without gating evidence on it", async () => {
   const input = request();
-  const allocations: number[] = [];
-  const passed = await runLiveValidation(input, approved, driver(async (trial) => {
-    allocations.push(trial.tokenLimit);
-    return metered(input, 40);
+  const attempted: number[] = [];
+  const report = await runLiveValidation(input, approved, driver(async (trial) => {
+    attempted.push(trial.attempt);
+    return trial.attempt === 1 ? {
+      ...metered(input, 0), metering: { metering: "unknown", reason: "No counts" },
+    } : metered(input, 2_000_000);
   }));
-  expect(allocations).toEqual([100, 60]);
-  expect(passed.outcome.status).toBe("passed");
-  expect(passed.baselineDigest).toBe(approved.digest);
-  const exhausted = await runLiveValidation(input, approved, driver(async () => metered(input, 100)));
-  expect(exhausted.attempts.map(({ outcome }) => outcome.status)).toEqual(["passed", "not_run"]);
-  expect(exhausted.outcome.status).not.toBe("passed");
-  const unmetered = await runLiveValidation(input, approved, driver(async () => ({
-    ...metered(input, 0), metering: { metering: "unknown", reason: "No counts" },
-  })));
-  expect(unmetered.attempts.map(({ outcome }) => outcome.status)).toEqual(["blocked", "not_run"]);
-  const overrun = await runLiveValidation(input, approved, driver(async () => metered(input, 110)));
-  expect(overrun.attempts[0]?.outcome.status).toBe("failed");
-  expect(overrun.attempts[1]?.outcome.status).toBe("not_run");
+  expect(attempted).toEqual([1, 2]);
+  expect(report.outcome.status).toBe("passed");
+  expect(report.baselineDigest).toBe(approved.digest);
+  expect(report.attempts.map(({ outcome }) => outcome.status)).toEqual(["passed", "passed"]);
+  expect(report.attempts[0]).not.toHaveProperty("inputTokens");
+  expect(report.attempts[1]).toMatchObject({ inputTokens: 2_000_000, outputTokens: 0 });
 });
 
 test("retains cancellation and keeps raw runner data and private reasons out of summary output", async () => {

@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { EvidenceOutcome, HostIdentity } from "@axiom/contracts";
-import { inspectBenchmarkPlan, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
+import { inspectBenchmarkPlan, isSupportedBenchmarkLimits, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { assertPrivateBenchmarkPath } from "./claude-sandbox.js";
-import { assertClaudeSandboxAvailable, isSupportedBenchmarkBudget, strictBenchmarkHost, strictHostUnavailable, supportsStrictBenchmarkCase } from "./native-benchmark.js";
+import { assertClaudeSandboxAvailable, strictBenchmarkHost, strictHostUnavailable, supportsStrictBenchmarkCase } from "./native-benchmark.js";
 import { nativeProgram } from "./native-program.js";
 import { prepareReviewedBaseline, requireCleanBenchmarkRevision, type ReviewedBaseline } from "./reviewed-baseline.js";
-import { isSupportedStandardLimits, standardBenchmarkHost, standardHostUnavailable, supportsStandardBenchmarkCase } from "./standard-benchmark.js";
+import { standardBenchmarkHost, standardHostUnavailable, supportsStandardBenchmarkCase } from "./standard-benchmark.js";
 
 const exec = promisify(execFile);
 const blocked = (reason: string): { outcome: EvidenceOutcome } => ({ outcome: { status: "blocked", reason } });
@@ -18,8 +18,6 @@ interface PreflightOptions extends ArchiveOptions {
   mode: "standard" | "strict";
   program?: string;
   model?: string;
-  tokenBudget: number;
-  maxOutputTokens: number;
 }
 
 async function probeVersion(host: HostIdentity, home: string, program: string, signal: AbortSignal) {
@@ -39,7 +37,7 @@ export async function runBenchmarkPreflight(agent: string, options: PreflightOpt
   if (strict && (agent !== strictBenchmarkHost.agent || process.platform !== strictBenchmarkHost.os ||
       (options.model !== undefined && options.model !== strictBenchmarkHost.model))) return blocked(strictHostUnavailable);
   if (!host) return blocked(standardHostUnavailable);
-  if (strict ? !isSupportedBenchmarkBudget(options) : !isSupportedStandardLimits(options)) return blocked("The benchmark limits are invalid.");
+  if (!isSupportedBenchmarkLimits(options)) return blocked("The benchmark limits are invalid.");
   if (!strict && options.model !== undefined && !/^[\w][\w./:-]{0,159}$/.test(options.model)) {
     return blocked("Supply the exact native model identifier.");
   }
@@ -66,9 +64,7 @@ export async function runBenchmarkPreflight(agent: string, options: PreflightOpt
       return blocked("The Linux Bubblewrap sandbox is unavailable.");
     }
     return { outcome: { status: "passed" as const }, report: { host, revision, baselineRef, baselineDigest: baseline.digest,
-      graderDigest: plan.grader, caseIds: plan.caseIds, profiles: plan.profiles, limits: strict ? {
-        ...limits, tokenBudget: options.tokenBudget, maxOutputTokens: options.maxOutputTokens,
-      } : limits, ...(strict ? {
+      graderDigest: plan.grader, caseIds: plan.caseIds, profiles: plan.profiles, limits, ...(strict ? {
         authorization: "--allow-paid", credentials: "ANTHROPIC_API_KEY",
         qualification: { status: "blocked", reason: "Live execution and installed-host evidence are required." },
       } : { authorization: "--allow-native", credentials: "native-account", qualification: standardQualification }),

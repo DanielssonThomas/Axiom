@@ -91,7 +91,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     await expect(configureClaudeProfile(profile, "local", "update", changedAtSameVersion)).rejects.toThrow(/new version/i);
     expect(await observeClaudeInstallation(profile, "local")).toMatchObject({ discovered: true, selected: true });
 
-    const options = { prompt: "Confirm the fixture.", model: host.model, maxBudgetUsd: 0.1 };
+    const options = { prompt: "Confirm the fixture.", model: host.model };
     const started = await executeClaudeSession(profile, options);
     expect(started.outcome.status).toBe("passed");
     expect(assessClaudeActivation(first, host, started.observation).outcome.status).toBe("passed");
@@ -114,7 +114,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     expect(await readFile(join(workspace, "CLAUDE.md"), "utf8")).toBe(projectInstructions);
 
     const artifacts = join(root, "archive");
-    const backend = createClaudeBackend({ program: profile.program, environment, artifacts, bundle: updated, maxBudgetUsd: 0.1 });
+    const backend = createClaudeBackend({ program: profile.program, environment, artifacts, bundle: updated });
     const request = {
       id: "native-fixture", caseId: "fixture", prompt: options.prompt, workspace, host, policy: updated.manifest.policy,
       mode: "with_axiom" as const, timeoutMs: 8000,

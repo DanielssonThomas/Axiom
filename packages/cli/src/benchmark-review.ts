@@ -8,6 +8,11 @@ import { gradeCase, type GradingAction } from "@axiom/graders";
 import { reviewedCases, reviewedGrader, standardQualification, type BenchmarkArchive } from "./benchmark-archive.js";
 import { prepareReviewedBaseline, requireCleanBenchmarkRevision, sha256, type ReviewedBaseline } from "./reviewed-baseline.js";
 
+// Preserve replay of archives produced before usage was made informational.
+const legacyStandardQualification = {
+  status: "blocked", reason: "Standard native diagnostics do not establish strict budget enforcement or release qualification.",
+};
+
 function snapshot(value: unknown): Map<string, string> {
   if (!Array.isArray(value) || value.some((item: unknown) => !Array.isArray(item) || item.length !== 2
       || typeof item[0] !== "string" || typeof item[1] !== "string")) throw new Error("Invalid saved workspace snapshot.");
@@ -26,9 +31,12 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
     const revision = await requireCleanBenchmarkRevision(repository);
     if (saved.revision !== revision) throw new Error("Benchmark evidence belongs to a different source revision.");
     if (saved.mode === "standard") {
+      const legacy = "hardBudgetEnforcement" in saved;
       if ((saved.provider !== "native-account" && saved.provider !== "injected") ||
-          saved.hardBudgetEnforcement !== "unavailable" || saved.metering.metering !== "unknown" ||
-          !isDeepStrictEqual(saved.qualification, standardQualification)) throw new Error("Invalid standard benchmark controls.");
+          saved.metering.metering !== "unknown" || (legacy && saved.hardBudgetEnforcement !== "unavailable") ||
+          !isDeepStrictEqual(saved.qualification, legacy ? legacyStandardQualification : standardQualification)) {
+        throw new Error("Invalid standard benchmark controls.");
+      }
     } else if (saved.mode !== "strict" || (saved.provider !== "injected" && saved.provider !== "anthropic-messages")) {
       throw new Error("Unknown benchmark controls.");
     }
@@ -98,8 +106,8 @@ export async function reviewNativeBenchmark(repository: string, directory: strin
     return { outcome, report: {
       review: "evidence-replay", mode: saved.mode, provider: saved.provider, revision, benchmarkOutcome: saved.outcome,
       baselineDigest: saved.baselineDigest, reviews,
-      ...(saved.mode === "standard" && { qualification: standardQualification, hardBudgetEnforcement: saved.hardBudgetEnforcement,
-        metering: saved.metering }),
+      ...(saved.mode === "standard" && { qualification: saved.qualification, metering: saved.metering,
+        ...("hardBudgetEnforcement" in saved && { hardBudgetEnforcement: saved.hardBudgetEnforcement }) }),
     } };
   } catch {
     return { outcome: { status: "blocked", reason: "The trusted summary, reviewed grader, or recorded evidence could not be reproduced." } as EvidenceOutcome };

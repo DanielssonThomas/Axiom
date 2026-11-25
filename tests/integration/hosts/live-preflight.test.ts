@@ -17,7 +17,7 @@ async function preflight(...args: string[]) {
 
 test.each(["codex", "hermes"])("keeps strict %s qualification unavailable before requesting credentials", async (host) => {
   expect(await preflight(host, "--case", "reuse-summary-formatter")).toMatchObject({
-    code: 1, output: { status: "blocked", reason: expect.stringMatching(/independently budgeted.*Claude/i) },
+    code: 1, output: { status: "blocked", reason: expect.stringMatching(/isolated.*Claude/i) },
   });
 });
 
@@ -71,11 +71,11 @@ test("a preflight rejects execution authorization flags", async () => {
 test.runIf(process.platform === "linux" && process.env.AXIOM_TEST_BWRAP === "1" && process.env.AXIOM_TEST_CLAUDE_BINARY)(
   "preflights the four strict Claude pairs with the pinned binary and sandbox", async () => {
     const caseIds = ["reuse-summary-formatter", "report-unavailable-preview", "clarify-material-decision", "resolve-format-decision"];
-    const args = ["claude", "--program", process.env.AXIOM_TEST_CLAUDE_BINARY!, "--timeout-seconds", "600", "--token-budget", "1000000"];
+    const args = ["claude", "--program", process.env.AXIOM_TEST_CLAUDE_BINARY!, "--timeout-seconds", "600"];
     expect(await preflight(...args, ...caseIds.flatMap((item) => ["--case", item]))).toMatchObject({
       code: 0, output: { status: "passed", report: {
         credentials: "ANTHROPIC_API_KEY", authorization: "--allow-paid", caseIds,
-        limits: { plannedAttempts: 8, tokenBudget: 1_000_000, maxOutputTokens: 2_048, timeoutSeconds: 600 },
+        limits: { plannedAttempts: 8, maxAttempts: 8, repetitions: 1, timeoutSeconds: 600 },
         qualification: { status: "blocked" },
       } },
     });

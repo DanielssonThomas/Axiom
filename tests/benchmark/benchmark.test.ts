@@ -301,7 +301,7 @@ test("shared evidence verification catches an archived trace changed during grad
   expect(result.attempts[0]?.assertions[0]?.outcome.reason).toMatch(/artifact identity changed/i);
 });
 
-test("preserves earlier failures and enforces attempt and concurrency budgets", async () => {
+test("preserves earlier failures and enforces attempt and concurrency limits", async () => {
   let current = 0;
   let peak = 0;
   let invocations = 0;

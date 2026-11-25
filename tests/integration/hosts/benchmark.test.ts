@@ -8,7 +8,7 @@ import { gradeCase } from "../../../evals/graders/index.js";
 import { loadBundleWorkspace } from "../../../packages/bundles/src/index.js";
 import { reviewNativeBenchmark } from "../../../packages/cli/src/benchmark-review.js";
 import { defaultBenchmarkLimits, runTrustedClaude } from "../../../packages/cli/src/native-benchmark.js";
-import { benchmarkModel } from "../../../packages/cli/src/provider-budget.js";
+import { benchmarkModel } from "../../../packages/cli/src/claude-provider.js";
 import { benchmarkRevision, prepareReviewedBaseline } from "../../../packages/cli/src/reviewed-baseline.js";
 import { admittedClaudeClarification, claudeClarificationTopic, supportsClaudeClarification } from "../../../packages/cli/src/claude-clarification.js";
 import { runStandardArchive } from "../../../packages/cli/src/standard-benchmark.js";
@@ -34,7 +34,7 @@ test.runIf(executable && process.platform === "linux")("grades a real Claude CLI
       policyVersion: "1", selectedProfiles: [], checks: {}, skills: [{ id: "design" }],
     });
     const backend = createClaudeBackend({
-      program: executable!, artifacts: store.directory, bundle, maxBudgetUsd: 0.1,
+      program: executable!, artifacts: store.directory, bundle,
       environment: { ANTHROPIC_BASE_URL: server.endpoint, ANTHROPIC_AUTH_TOKEN: "loopback-only" },
     });
     const result = await runBenchmark({
@@ -94,7 +94,7 @@ test.runIf(executable && process.platform === "linux")("captures a native clarif
     await writeFile(issue, "Decide the audience before editing.\n");
     const trace = await executeClaudeSession({ program: executable!, workspace, home, userHome,
       environment: { ANTHROPIC_BASE_URL: server.endpoint, ANTHROPIC_AUTH_TOKEN: "loopback-only" },
-    }, { model, prompt: "Implement the change described in issue.txt.", maxBudgetUsd: 0.1,
+    }, { model, prompt: "Implement the change described in issue.txt.",
       clarification: (observed: string) => observed === question ? "target audience" : undefined,
     });
     expect(trace.outcome.status).toBe("passed");
@@ -151,7 +151,7 @@ test.runIf(executable && process.platform === "linux")("grades and replays paire
         sourceRevision: archive.baselineRef, policyVersion: catalog.core.version, selectedProfiles: archive.profiles, checks: catalog.checks, skills,
       });
       return { policy: bundle.manifest.policy, bundleDigest: bundle.manifest.digest, backend: createClaudeBackend({
-        program: executable!, artifacts: archive.evidenceDirectory, bundle, maxBudgetUsd: 0.1, clarification: admittedClaudeClarification(archive.cases),
+        program: executable!, artifacts: archive.evidenceDirectory, bundle, clarification: admittedClaudeClarification(archive.cases),
         environment: { ANTHROPIC_BASE_URL: server.endpoint, ANTHROPIC_AUTH_TOKEN: "loopback-only" },
       }) };
     });
@@ -227,8 +227,7 @@ test.runIf(executable && process.platform === "linux" && process.env.AXIOM_TEST_
       }, baseline, revision, revision, (body, signal) => {
         const tools = body.tools as { name: string }[];
         toolSurfaces.push(tools.map(({ name }) => name));
-        expect(Number(body.max_tokens)).toBeLessThanOrEqual(defaultBenchmarkLimits.maxOutputTokens);
-        return fetch(server.endpoint + "/v1/messages", { method: "POST", body: JSON.stringify(body), signal });
+       return fetch(server.endpoint + "/v1/messages", { method: "POST", body: JSON.stringify(body), signal });
       });
       expect(result).toMatchObject({ mode: "strict", provider: "injected", metering: { inputTokens: 144, outputTokens: 48 } });
       expect(result.report.attempts.map(({ case: evaluation, execution, outcome }) => [evaluation.id, execution?.outcome.status, outcome.status]))

@@ -86,7 +86,7 @@ async function claudeFixture(input: Fixture): Promise<InstalledFixture> {
   const next = await build("0.1.1", ["angular-nx"]);
   let chosen = first;
   const session = async (enabled: boolean) => {
-    const trace = await claude.executeClaudeSession(profile, { model: host.model, maxBudgetUsd: 0.1, prompt: ordinaryPrompt, signal });
+    const trace = await claude.executeClaudeSession(profile, { model: host.model, prompt: ordinaryPrompt, signal });
     expect(trace.code).toBe(0);
     expect(trace.observation.observedModel).toBe(host.model);
     const activation = claude.assessClaudeActivation(chosen, host, trace.observation);

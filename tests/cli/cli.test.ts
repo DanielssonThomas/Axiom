@@ -45,28 +45,31 @@ test("both benchmark forms return the same result and echo the requested agent",
   const benchmark = run("benchmark", "codex");
   expect(benchmark).toEqual({
     code: 1,
-    output: { command: "benchmark", agent: "codex", status: "blocked", reason: expect.stringMatching(/budgeted native route/i) },
+    output: { command: "benchmark", agent: "codex", status: "blocked", reason: expect.stringMatching(/isolated native route/i) },
   });
   expect(run("--benchmark", "codex")).toEqual(benchmark);
 });
 
 test("built-in benchmark options preserve explicit authorization and reject invalid numeric arguments", () => {
-  expect(run("benchmark", "claude", "--token-budget", "several")).toMatchObject({ code: 2 });
-  expect(run("benchmark", "claude", "--token-budget", "300000", "--allow-paid", "--allow-paid")).toMatchObject({ code: 2 });
+  expect(run("benchmark", "claude", "--timeout-seconds", "several")).toMatchObject({ code: 2 });
+  expect(run("benchmark", "claude", "--allow-paid", "--allow-paid")).toMatchObject({ code: 2 });
   const result = run("benchmark", "claude");
   expect(result).toMatchObject({ code: 1, output: { status: "blocked" } });
   if (process.platform === "linux") expect(result.output.reason).toMatch(/--allow-paid/);
 });
 
-test("standard benchmarks require native execution authorization and reject a claimed hard budget", () => {
+test.each(["--token-budget", "--max-output-tokens"])("rejects the retired benchmark option %s", (option) => {
+  expect(run("benchmark", "claude", option, "300000")).toMatchObject({ code: 2 });
+});
+
+test("standard benchmarks require native execution authorization", () => {
   for (const agent of ["codex", "hermes", "claude"]) {
     const blocked = run("benchmark", agent, "--mode", "standard");
     expect(blocked).toMatchObject({ code: 1, output: { agent, mode: "standard", status: "blocked",
       reason: expect.stringMatching(/--allow-native/) } });
     expect(run("--benchmark", agent, "--mode", "standard")).toEqual(blocked);
   }
-  expect(run("benchmark", "codex", "--mode", "standard", "--allow-native", "--token-budget", "300000")).toMatchObject({ code: 2 });
-  expect(run("benchmark", "claude", "--mode", "standard", "--allow-paid")).toMatchObject({ code: 2 });
+ expect(run("benchmark", "claude", "--mode", "standard", "--allow-paid")).toMatchObject({ code: 2 });
 }, 25_000);
 
 test("doctor distinguishes fresh native loading from changed installed instructions", () => {

@@ -67,17 +67,16 @@ function parse(args: readonly string[]): Operation | undefined {
     if (!agent || /^-|\s/.test(agent)) return;
     if (args.includes("--request")) return expert("benchmark", args, agent);
     const flags = options(args, ["--mode", "--auth-home", "--program", "--model", "--evidence", "--baseline", "--case",
-      "--token-budget", "--max-output-tokens", "--timeout-seconds", "--repetitions", "--max-attempts"],
+      "--timeout-seconds", "--repetitions", "--max-attempts"],
     "--case", ["--allow-paid", "--allow-native", "--preflight"]);
     if (!flags) return;
     const mode = flags.get("--mode") ?? "strict";
     if (mode !== "standard" && mode !== "strict") return;
-    if (mode === "standard" ? ["--allow-paid", "--token-budget", "--max-output-tokens"].some(flags.has)
+    if (mode === "standard" ? flags.has("--allow-paid")
       : ["--allow-native", "--auth-home", "--max-attempts"].some(flags.has)) return;
     const preflight = flags.has("--preflight");
     if (preflight && ["--allow-paid", "--allow-native"].some(flags.has)) return;
     const numbers = {
-      tokenBudget: "--token-budget", maxOutputTokens: "--max-output-tokens",
       timeoutSeconds: "--timeout-seconds", repetitions: "--repetitions",
     } as const;
     for (const flag of Object.values(numbers)) {
@@ -111,7 +110,7 @@ function parse(args: readonly string[]): Operation | undefined {
       }, signal) };
     }
     return { summary: { command: "benchmark", agent }, run: (signal) => runNativeBenchmark(agent, {
-      ...shared, tokenBudget: limits.tokenBudget, maxOutputTokens: limits.maxOutputTokens, allowPaid: flags.has("--allow-paid"),
+      ...shared, allowPaid: flags.has("--allow-paid"),
     }, signal) };
   }
   if (command === "benchmark-review") {

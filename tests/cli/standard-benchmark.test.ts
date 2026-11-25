@@ -14,7 +14,7 @@ const program = process.env.AXIOM_HERMES_CLI;
 const host = { agent: "hermes", version: hermesVersion, model: "fixture-model", os: process.platform, surface: "cli" };
 const patchedCommand = 'import { formatSummary } from "./summary-format.mjs";\nexport function run(input) { return formatSummary(input); }\n';
 
-test("records positive standard behavior separately from hard-budget and qualification evidence", async () => {
+test("records positive standard behavior separately from usage and installed-host qualification", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-standard-replay-"));
   try {
     const options = { repository, evidenceDirectory: root, allowNative: true, timeoutSeconds: 30, repetitions: 1 };
@@ -41,7 +41,7 @@ test("records positive standard behavior separately from hard-budget and qualifi
     const result = await runStandardArchive(options, host, "injected", configure);
     expect(result).toMatchObject({
       outcome: { status: "passed" }, report: { mode: "standard", qualification: { status: "blocked" },
-        hardBudgetEnforcement: "unavailable", metering: { metering: "unknown" } },
+        metering: { metering: "unknown" } },
     });
     if (!("report" in result) || !result.report) throw new Error("Expected a standard receipt.");
     expect(result.report.report.attempts.map(({ runtime, execution }) => [runtime, execution?.usage.metering])).toEqual([
@@ -49,7 +49,7 @@ test("records positive standard behavior separately from hard-budget and qualifi
     ]);
     const review = await reviewNativeBenchmark(repository, result.report.evidenceDirectory, result.report.evidenceDigest);
     expect(review).toMatchObject({ outcome: { status: "passed" }, report: { mode: "standard", qualification: { status: "blocked" },
-      provider: "injected", hardBudgetEnforcement: "unavailable", benchmarkOutcome: { status: "passed" } } });
+      provider: "injected", benchmarkOutcome: { status: "passed" } } });
     const cancellation = new AbortController();
     cancellation.abort();
     expect((await runStandardArchive(options, host, "injected", configure, cancellation.signal)).outcome.status).toBe("blocked");

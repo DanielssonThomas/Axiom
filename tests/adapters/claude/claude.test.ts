@@ -175,7 +175,7 @@ test("launches the native bounded benchmark command, resolves traces in the shar
   const program = join(root, "fake-claude");
   const workspace = join(root, "workspace");
   const archive = join(root, "archive");
-  const backend = createClaudeBackend({ program, artifacts: archive, maxBudgetUsd: 0.1 });
+  const backend = createClaudeBackend({ program, artifacts: archive });
   const request: BackendRequest = {
     id: "fixture-run", caseId: "fixture", prompt: "fixture prompt", workspace, host, mode: "without_axiom", timeoutMs: 5000,
     policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },
@@ -216,7 +216,7 @@ test("stops subprocess work when a launched benchmark reaches its deadline", asy
   const workspace = join(root, "workspace");
   const childPid = join(root, "child-pid");
   const afterDeadline = join(root, "child-finished");
-  const backend = createClaudeBackend({ program, artifacts: join(root, "archive"), maxBudgetUsd: 0.1 });
+  const backend = createClaudeBackend({ program, artifacts: join(root, "archive") });
   const request: BackendRequest = {
     id: "fixture-deadline", caseId: "fixture", prompt: "fixture prompt", workspace, host, mode: "without_axiom", timeoutMs: 1000,
     policy: { version: "1", digest: `sha256:${"a".repeat(64)}`, profiles: [] },

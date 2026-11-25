@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { connect, createServer } from "node:net";
 
-// This process runs inside the isolated network namespace. Its only route outside is the budgeted Unix socket.
+// This process runs inside the isolated network namespace. Its only route outside is the provider Unix socket.
 const bridge = createServer((client) => {
   const provider = connect("/axiom/provider.sock");
   client.on("error", () => provider.destroy());

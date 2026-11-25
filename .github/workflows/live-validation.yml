@@ -35,12 +35,8 @@ on:
         required: true
         type: number
         default: 5
-      token_budget:
-        description: Total input and output token cap (1 through 1000000)
-        required: true
-        type: number
       allow_paid:
-        description: Authorize the budgeted provider calls for this run
+        description: Authorize paid provider calls for this run
         required: true
         type: boolean
         default: false
@@ -83,7 +79,6 @@ jobs:
           AXIOM_BASELINE_DIGEST: ${{ inputs.baseline_digest }}
           AXIOM_ATTEMPTS: ${{ inputs.attempts }}
           AXIOM_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
-          AXIOM_TOKEN_BUDGET: ${{ inputs.token_budget }}
           AXIOM_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           AXIOM_ALLOW_PAID: ${{ inputs.allow_paid }}
           AXIOM_CLAUDE_PROGRAM: ${{ runner.temp }}/axiom-native/node_modules/@anthropic-ai/claude-code-linux-x64/claude

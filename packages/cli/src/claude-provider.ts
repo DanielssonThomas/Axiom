@@ -1,10 +1,9 @@
 import { chmod } from "node:fs/promises";
 import { createServer } from "node:http";
+import { pipeline } from "node:stream/promises";
 import type { Usage } from "@axiom/contracts";
 
 export const benchmarkModel = "claude-haiku-4-5-20251001";
-// The pinned model's standard Messages API context window. No beta extension or server tool is forwarded.
-export const inputReservation = 200_000;
 export const benchmarkTools = ["Read", "Glob", "Grep", "Edit", "Write", "Skill"] as const;
 const localToolNames: ReadonlySet<string> = new Set(benchmarkTools);
 
@@ -30,7 +29,7 @@ const object = (value: unknown) => value !== null && typeof value === "object" &
   ? value as Record<string, unknown> : {};
 const tokens = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-function admit(raw: unknown, outputLimit: number): Record<string, unknown> | undefined {
+function admit(raw: unknown): Record<string, unknown> | undefined {
   const body = object(raw);
   if (body.model !== benchmarkModel || !Array.isArray(body.messages) || body.stream !== true ||
       !tokens(body.max_tokens) || body.max_tokens === 0 || Object.keys(body).some((key) => !fields.has(key))) return;
@@ -40,58 +39,73 @@ function admit(raw: unknown, outputLimit: number): Record<string, unknown> | und
       !Object.keys(object(input_schema)).length ||
       Object.keys(settings).some((key) => !["description", "cache_control", "strict"].includes(key));
   }))) return;
-  // Run standard Messages without server context edits or an independently variable thinking allocation.
-  const { context_management: _contextManagement, thinking: _thinking, ...standard } = body;
-  return { ...standard, max_tokens: Math.min(body.max_tokens, outputLimit) };
+  // Run standard Messages without server-managed context edits.
+  const { context_management: _contextManagement, ...standard } = body;
+  return standard;
 }
 
-function meter(text: string) {
+function providerUsage() {
   let input: number[] | undefined;
   let output: number | undefined;
   let stopped = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
+  let invalid = false;
+  function observe(line: string): boolean {
+    if (!line.startsWith("data:")) return true;
     const event = object(JSON.parse(line.slice(5)));
-    if (stopped || event.type === "error") return;
+    if (stopped || event.type === "error") return false;
     if (event.type === "message_start") {
-      if (input !== undefined) return;
+      if (input !== undefined) return false;
       const message = object(event.message);
       const usage = object(message.usage);
       const counts = [usage.input_tokens, usage.cache_creation_input_tokens ?? 0, usage.cache_read_input_tokens ?? 0];
-      if (message.model !== benchmarkModel || !counts.every(tokens)) return;
+      if (message.model !== benchmarkModel || !counts.every(tokens)) return false;
       input = counts;
     } else if (event.type === "message_delta") {
       const previous = input;
-      if (!previous) return;
+      if (!previous) return false;
       const usage = object(event.usage);
       const counts = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens]
         .map((count, index) => count ?? previous[index]);
-      if (!counts.every(tokens) || counts.some((count, index) => count < previous[index]!)) return;
-      if (!tokens(usage.output_tokens) || usage.output_tokens < (output ?? 0)) return;
+      if (!counts.every(tokens) || counts.some((count, index) => count < previous[index]!)) return false;
+      if (!tokens(usage.output_tokens) || usage.output_tokens < (output ?? 0)) return false;
       input = counts;
       output = usage.output_tokens;
     } else if (event.type === "message_stop") {
       stopped = true;
     }
+    return true;
   }
-  const total = input?.reduce((sum, amount) => sum + amount, 0);
-  if (stopped && tokens(total) && tokens(output)) return { input: total, output };
+  return {
+    async *stream(source: AsyncIterable<Uint8Array>) {
+      const decoder = new TextDecoder();
+      let partial = "";
+      for await (const chunk of source) {
+        if (!invalid) {
+          const lines = (partial + decoder.decode(chunk, { stream: true })).split("\n");
+          partial = lines.pop()!;
+          try { invalid = !lines.every(observe); } catch { invalid = true; }
+        }
+        yield chunk;
+      }
+      if (!invalid) {
+        try { invalid = !observe(partial + decoder.decode()); } catch { invalid = true; }
+      }
+    },
+    read() {
+      const total = input?.reduce((sum, amount) => sum + amount, 0);
+      if (!invalid && stopped && tokens(total) && tokens(output)) return { input: total, output };
+    },
+  };
 }
 
-export async function openProviderBudget(
-  socketPath: string, tokenLimit: number, outputLimit: number, upstream: MessagesTransport, signal?: AbortSignal,
-) {
-  if (!tokens(tokenLimit) || !tokens(outputLimit) || outputLimit < 1 || outputLimit > 8_192) {
-    throw new Error("Invalid provider limits.");
-  }
+export async function openClaudeProvider(socketPath: string, upstream: MessagesTransport, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const closed = new AbortController();
   const deadline = signal ? AbortSignal.any([signal, closed.signal]) : closed.signal;
   let inputTokens = 0;
   let outputTokens = 0;
   let busy = false;
-  let uncertain = false;
-  let refused = false;
+  let unmeasured = 0;
   let submitted = 0;
   let unfamiliarTools = 0;
   const server = createServer(async (request, response) => {
@@ -110,14 +124,10 @@ export async function openProviderBudget(
         if (size > 4 * 1024 * 1024) return reject(413);
         parts.push(chunk);
       }
-      body = admit(JSON.parse(Buffer.concat(parts).toString("utf8")), outputLimit);
+      body = admit(JSON.parse(Buffer.concat(parts).toString("utf8")));
     } catch { return reject(400); }
     if (!body) return reject(403);
-    const max = body.max_tokens as number;
-    if (deadline.aborted || busy || uncertain || tokenLimit - inputTokens - outputTokens < inputReservation + max) {
-      refused = true;
-      return reject(429);
-    }
+    if (deadline.aborted || busy) return reject(429);
     busy = true;
     submitted++;
     if ((body.tools as unknown[] | undefined)?.some((tool) => !localToolNames.has(String(object(tool).name)))) {
@@ -127,25 +137,19 @@ export async function openProviderBudget(
       const reply = await upstream(body, deadline);
       if (!reply.ok || !reply.body || !reply.headers.get("content-type")?.startsWith("text/event-stream")) {
         await reply.body?.cancel();
-        throw new Error("No metered provider stream.");
+        throw new Error("No provider stream.");
       }
-      const parts: Uint8Array[] = [];
-      let size = 0;
-      for await (const chunk of reply.body) {
-        size += chunk.length;
-        if (size > 8 * 1024 * 1024) throw new Error("Provider response exceeded its buffer.");
-        parts.push(chunk);
-      }
-      const payload = Buffer.concat(parts);
-      const actual = meter(payload.toString("utf8"));
-      if (!actual || actual.input > inputReservation || actual.output > max) throw new Error("Invalid provider usage.");
-      inputTokens += actual.input;
-      outputTokens += actual.output;
-      response.writeHead(200, { "content-type": "text/event-stream", connection: "close" }).end(payload);
+      const usage = providerUsage();
+      response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
+      await pipeline(usage.stream(reply.body), response, { signal: deadline });
+      const actual = usage.read();
+      if (actual) {
+        inputTokens += actual.input;
+        outputTokens += actual.output;
+      } else unmeasured++;
     } catch {
-      // A submitted request may have incurred usage. Stop instead of releasing an unverified reservation.
-      uncertain = true;
-      reject(502);
+      unmeasured++;
+      if (!response.headersSent && !response.destroyed) reject(502);
     } finally {
       busy = false;
     }
@@ -167,11 +171,12 @@ export async function openProviderBudget(
   return {
     socketPath,
     close,
-    get refused() { return refused; },
     toolSurface() { return { submitted, unfamiliarTools }; },
-    usage(): Usage {
-      return uncertain || busy ? { metering: "unknown", reason: "A submitted provider request lacks complete usage." }
-        : { metering: "reported", inputTokens, outputTokens };
+    snapshot() { return { inputTokens, outputTokens, unmeasured }; },
+    usage(since = { inputTokens: 0, outputTokens: 0, unmeasured: 0 }): Usage {
+      return unmeasured !== since.unmeasured || busy
+        ? { metering: "unknown", reason: "A submitted provider request lacks complete usage." }
+        : { metering: "reported", inputTokens: inputTokens - since.inputTokens, outputTokens: outputTokens - since.outputTokens };
     },
   };
 }

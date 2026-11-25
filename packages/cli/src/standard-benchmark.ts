@@ -7,7 +7,7 @@ import { buildCodexBundle, createCodexBackend, supportedVersion as codexVersion 
 import type { BenchmarkBackend, EvaluationCase, EvidenceOutcome, HostIdentity, PolicyIdentity, Usage } from "@axiom/contracts";
 import { createHermesAccountBackend, hermesBundleAdapter, hermesVersion } from "@axiom/hermes-adapter";
 import { unavailablePreviewCase } from "@axiom/graders";
-import { defaultCase, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
+import { defaultCase, isSupportedBenchmarkLimits, prepareBenchmarkArchive, runArchivedBenchmark, standardQualification, UnsupportedBenchmarkCase, type ArchiveOptions } from "./benchmark-archive.js";
 import { codexDigest } from "./native-install.js";
 import { admittedClaudeClarification, readClaudeClarification, supportsClaudeClarification } from "./claude-clarification.js";
 import { nativeProgram } from "./native-program.js";
@@ -45,11 +45,6 @@ export function supportsStandardBenchmarkCase(agent: string, item: EvaluationCas
     ((agent === "codex" || agent === "hermes") && supportsNativePreview(item));
 }
 
-export function isSupportedStandardLimits({ timeoutSeconds, repetitions, maxAttempts }: Pick<ArchiveOptions, "timeoutSeconds" | "repetitions" | "maxAttempts">) {
-  const limit = (value: number, maximum: number) => Number.isSafeInteger(value) && value > 0 && value <= maximum;
-  return limit(timeoutSeconds, 900) && limit(repetitions, 10) && (maxAttempts === undefined || limit(maxAttempts, 20));
-}
-
 interface ArmedBackend {
   backend: BenchmarkBackend;
   policy: PolicyIdentity;
@@ -63,7 +58,7 @@ type StandardBenchmarkResult = { outcome: EvidenceOutcome; report?: Awaited<Retu
 export async function runStandardArchive(options: StandardBenchmarkOptions, host: HostIdentity,
   provider: "native-account" | "injected", configure: Configure, signal?: AbortSignal): Promise<StandardBenchmarkResult> {
   if (!options.allowNative) return blocked("Authorize native model execution explicitly with --allow-native.");
-  if (!isSupportedStandardLimits(options)) return blocked("The standard time or attempt limits are invalid.");
+  if (!isSupportedBenchmarkLimits(options)) return blocked("The standard time or attempt limits are invalid.");
   const deadline = AbortSignal.timeout(options.timeoutSeconds * 1000);
   const cancellation = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let baseline: ReviewedBaseline | undefined;
@@ -98,7 +93,7 @@ export async function runStandardArchive(options: StandardBenchmarkOptions, host
         const workspace = workspaces.get(value.execution.requestId);
         if (workspace !== undefined) return readClaudeClarification(archive.store, value.execution, workspace, evaluation);
       },
-      control: { mode: "standard", provider, hardBudgetEnforcement: "unavailable", qualification: standardQualification },
+      control: { mode: "standard", provider, qualification: standardQualification },
       metering: () => unknownUsage,
       assess: (report) => report.outcome,
     });

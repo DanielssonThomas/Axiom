@@ -27,7 +27,6 @@ export interface LiveInputs {
   baselineDigest: string;
   attempts: number;
   timeoutMinutes: number;
-  tokenBudget: number;
 }
 
 function positiveInteger(input: string | undefined, max: number): number {
@@ -45,7 +44,6 @@ export function parseLiveInputs(environment: NodeJS.ProcessEnv): LiveInputs {
     host, model, os, baselineRef, baselineDigest: digestSchema.parse(environment.AXIOM_BASELINE_DIGEST),
     attempts: positiveInteger(environment.AXIOM_ATTEMPTS, 25),
     timeoutMinutes: positiveInteger(environment.AXIOM_TIMEOUT_MINUTES, 15),
-    tokenBudget: positiveInteger(environment.AXIOM_TOKEN_BUDGET, 1_000_000),
   };
 }
 
@@ -54,13 +52,11 @@ interface LiveTrial {
   model: string;
   os: LiveInputs["os"];
   attempt: number;
-  tokenLimit: number;
   baseline: ReviewedBaseline;
   baselineRef?: string;
 }
 
-/** The trusted installed-host runner enforces tokenLimit before provider calls, isolates agent access
- * from the verifier baseline, terminates on abort, and returns independently observed installed-host evidence. */
+/** The trusted runner isolates the verifier baseline, terminates on abort, and returns independently observed installed-host evidence. */
 export interface TrustedLiveRunner {
   readiness(input: Pick<LiveTrial, "host" | "model" | "os">, signal: AbortSignal):
     Promise<"ready" | "runner-unavailable" | "credentials-unavailable" | "authorization-required">;
@@ -119,7 +115,6 @@ export async function runLiveValidation(
 ) {
   positiveInteger(String(input.attempts), 25);
   positiveInteger(String(input.timeoutMinutes), 15);
-  positiveInteger(String(input.tokenBudget), 1_000_000);
   const { host, model, os } = input;
   const attempts: LiveAttempt[] = Array.from({ length: input.attempts }, (_, index) => ({
     attempt: index + 1, outcome: notRun("The attempt has not started."),
@@ -128,7 +123,6 @@ export async function runLiveValidation(
   const timeout = setTimeout(() => controller.abort(), input.timeoutMinutes * 60_000);
   const signal = cancellation ? AbortSignal.any([controller.signal, cancellation]) : controller.signal;
   const interruption = () => cancellation?.aborted ? "The live run was cancelled." : "The live run timed out.";
-  let remaining = input.tokenBudget;
   let unavailable: string | undefined;
   try {
     if (baseline.digest !== input.baselineDigest) unavailable = "The reviewed baseline identity does not match.";
@@ -146,32 +140,22 @@ export async function runLiveValidation(
         attempt.outcome = notRun(unavailable ?? "The installed-host runner is unavailable.");
         continue;
       }
-      if (signal.aborted || remaining === 0) {
-        attempt.outcome = notRun(signal.aborted ? interruption() : "The token budget is exhausted.");
+      if (signal.aborted) {
+        attempt.outcome = notRun(interruption());
         continue;
       }
       try {
         const value = await bounded(() => runner.run({
-          host, model, os, attempt: attempt.attempt, tokenLimit: remaining, baseline, baselineRef: input.baselineRef,
+          host, model, os, attempt: attempt.attempt, baseline, baselineRef: input.baselineRef,
         }, signal), signal);
         const observed = observedResult(value, input);
         attempt.outcome = observed.outcome;
         if (observed.evidenceDigest) attempt.evidenceDigest = observed.evidenceDigest;
         if (observed.observedStatus) attempt.observedStatus = observed.observedStatus;
         const usage = observed.metering;
-        if (usage?.metering !== "reported" || usage.inputTokens === undefined || usage.outputTokens === undefined) {
-          if (attempt.outcome.status === "passed") attempt.outcome = blocked("Actual token usage was unavailable.");
-          unavailable = "Further attempts require complete token metering.";
-          continue;
-        }
-        attempt.inputTokens = usage.inputTokens;
-        attempt.outputTokens = usage.outputTokens;
-        const spent = usage.inputTokens + usage.outputTokens;
-        if (spent > remaining) {
-          attempt.outcome = { status: "failed", reason: "The installed host exceeded the allocated token budget." };
-          remaining = 0;
-        } else {
-          remaining -= spent;
+        if (usage?.metering === "reported") {
+          if (usage.inputTokens !== undefined) attempt.inputTokens = usage.inputTokens;
+          if (usage.outputTokens !== undefined) attempt.outputTokens = usage.outputTokens;
         }
       } catch {
         attempt.outcome = blocked(signal.aborted ? interruption() : "The installed-host runner did not return observable results.");
@@ -186,7 +170,7 @@ export async function runLiveValidation(
     : !unavailable && attempts.every((attempt) => attempt.outcome.status === "passed")
       ? { status: "passed" }
       : blocked(unavailable ?? "Required installed-host evidence is incomplete.");
-  return { host, model, os, baselineRef: input.baselineRef, baselineDigest: baseline.digest, tokenBudget: input.tokenBudget,
+  return { host, model, os, baselineRef: input.baselineRef, baselineDigest: baseline.digest,
     timeoutMinutes: input.timeoutMinutes, attempts, outcome };
 }
 

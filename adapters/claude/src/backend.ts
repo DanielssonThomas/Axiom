@@ -15,7 +15,6 @@ export interface ClaudeBackendOptions {
   program: string;
   /** Trusted archive outside the disposable workspace. Artifact locations are archive-relative. */
   artifacts: string;
-  maxBudgetUsd?: number;
   /** Use native subscription authentication from an existing CLAUDE_CONFIG_DIR. */
   authHome?: string;
   /** HOME for native subscription resources. Defaults to the operator's home. */
@@ -30,7 +29,6 @@ export interface ClaudeBackendOptions {
 
 export interface ClaudeSessionOptions {
   model: string;
-  maxBudgetUsd?: number;
   subscription?: boolean;
   prompt: string;
   signal?: AbortSignal;
@@ -48,12 +46,6 @@ function behind(root: string, path: string): boolean {
 
 const subscriptionTools = ["Read", "Glob", "Grep", "Edit", "Write", "Skill"];
 
-function budgetArguments(budget: number | undefined, subscription: boolean): string[] {
-  if (subscription && budget === undefined) return [];
-  if (budget === undefined || !Number.isFinite(budget) || budget <= 0) throw new Error("A positive Claude API budget is required.");
-  return ["--max-budget-usd", String(budget)];
-}
-
 /** Run one native print session and normalize CLI observations without storing transcript text. */
 export async function executeClaudeSession(profile: ClaudeProfile, options: ClaudeSessionOptions) {
   const exchange = options.clarification && clarificationExchange(options.clarification);
@@ -65,7 +57,6 @@ export async function executeClaudeSession(profile: ClaudeProfile, options: Clau
     "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
     ...(exchange ? ["--input-format", "stream-json", "--permission-prompt-tool", "stdio"] : []),
     "--permission-mode", exchange ? "default" : "dontAsk", "--no-session-persistence",
-    ...budgetArguments(options.maxBudgetUsd, !!options.subscription),
     "--model", options.model,
     ...(enabledTools ? ["--tools", enabledTools.join(","), ...(allowedTools?.length ? ["--allowedTools", allowedTools.join(",")] : []),
       "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'] : []),
@@ -79,7 +70,6 @@ export async function executeClaudeSession(profile: ClaudeProfile, options: Clau
 export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBackend {
   const { authHome } = options;
   const subscription = authHome !== undefined;
-  budgetArguments(options.maxBudgetUsd, subscription);
   if (authHome !== undefined && (!isAbsolute(authHome) || (options.userHome !== undefined && !isAbsolute(options.userHome))
     || options.launch || options.installNative)) {
     throw new Error("Native Claude authentication requires absolute profile roots and a session-only plugin.");
@@ -142,7 +132,6 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
       const clarification = options.clarification?.(request.caseId);
       const trace = await executeClaudeSession(profile, {
         model: request.host.model, prompt: request.prompt, signal, subscription,
-        ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
         ...(bundle && !options.installNative ? { bundle } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
         ...(clarification ? { clarification, useDisposableSettings: !!(options.launch && options.installNative) } : {}),

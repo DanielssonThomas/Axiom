@@ -150,7 +150,7 @@ async function executeAttempt(
   }
 }
 
-/** Run paired trials within one wall-clock scheduling, attempt and concurrency budget. */
+/** Run paired trials with wall-clock, attempt, and concurrency limits. */
 export async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkReport> {
   const limits = runLimitsSchema.parse(options.limits);
   const host = hostIdentitySchema.parse(options.host);
@@ -161,7 +161,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<Benchmark
   if (!Number.isSafeInteger(options.repetitions) || options.repetitions < 1) {
     throw new Error("A positive repetition count is required.");
   }
-  // The report retains every scheduled attempt and assertion, including budget skips.
+  // The report retains every scheduled attempt and assertion, including unstarted work.
   const reportEntries = cases.reduce((total, evaluation) => total + 1 + evaluation.assertions.length, 0);
   if (reportEntries * options.repetitions * 2 > 10_000) {
     throw new Error("The benchmark plan is too large to retain its attempt and assertion reports.");

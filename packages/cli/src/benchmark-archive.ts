@@ -9,7 +9,7 @@ import { requireCleanBenchmarkRevision, sha256, type ReviewedBaseline } from "./
 
 export const defaultCase = "reuse-summary-formatter";
 export const standardQualification = {
-  status: "blocked", reason: "Standard native diagnostics do not establish strict budget enforcement or release qualification.",
+  status: "blocked", reason: "The behavioral benchmark alone does not establish installed-host release qualification.",
 } as const;
 
 export interface ArchiveOptions {
@@ -22,9 +22,14 @@ export interface ArchiveOptions {
   maxAttempts?: number;
 }
 
+export function isSupportedBenchmarkLimits({ timeoutSeconds, repetitions, maxAttempts }: Pick<ArchiveOptions, "timeoutSeconds" | "repetitions" | "maxAttempts">) {
+  const limit = (value: number, maximum: number) => Number.isSafeInteger(value) && value > 0 && value <= maximum;
+  return limit(timeoutSeconds, 900) && limit(repetitions, 10) && (maxAttempts === undefined || limit(maxAttempts, 20));
+}
+
 type Control =
-  | { mode: "strict"; provider: "anthropic-messages" | "injected"; tokenBudget: number; maxOutputTokens: number }
-  | { mode: "standard"; provider: "native-account" | "injected"; hardBudgetEnforcement: "unavailable"; qualification: EvidenceOutcome };
+  | { mode: "strict"; provider: "anthropic-messages" | "injected" }
+  | { mode: "standard"; provider: "native-account" | "injected"; qualification: EvidenceOutcome };
 
 export type BenchmarkArchive = Control & {
   revision: string;
