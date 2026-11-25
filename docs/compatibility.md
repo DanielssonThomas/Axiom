@@ -191,11 +191,11 @@ node packages/cli/dist/index.js benchmark hermes --mode standard --preflight --b
 
 Use `--program` for the pinned executables and `--auth-home` for the existing Codex and private Linux Hermes logins if they are outside the default locations. The preview pair needs authorization for two GPT-6 Luna attempts and 120 seconds per host using the signed-in account's quota. After approval, replace `--preflight` with `--allow-native` and replay each private evidence archive. The standard routes have time and attempt limits. Aggregate provider usage is unknown. [Benchmark replay](install.md#review-the-saved-evidence)
 
-## Proposed acceptance amendments for review
+## Reviewed acceptance amendments
 
-These amendments apply prospectively. The source policy, reviewed cases, graders, individual grades, and historical paired aggregates retain their original meaning. Adopt the amendments after independent review and record the acceptance revision before authorizing further live runs.
+The owner adopted these independently reviewed amendments for #19 on 2026-11-25. They apply prospectively. The source policy, reviewed cases, graders, individual grades, and historical paired aggregates retain their original meaning.
 
-| Issue | Existing requirement | Proposed interpretation or amendment | Rationale and compensating verification |
+| Issue | Existing requirement | Adopted interpretation or amendment | Rationale and compensating verification |
 | --- | --- | --- | --- |
 | [#1](https://github.com/DanielssonThomas/Axiom/issues/1) | Required live-host qualification has no hidden skips or stale evidence. | Require complete deterministic evidence and fresh observed Axiom behavior for the declared matrix. Track comparative trials separately. | Every mandatory category still needs an explicit disposition and evidence for its final revision. A compatibility claim requires the matching host, version, surface and OS. |
 | [#6](https://github.com/DanielssonThomas/Axiom/issues/6) | Required failed, blocked, missing, stale and unrun results prevent overall success. | Preserve the original strict paired aggregate and individual grades. Treat a completed experiment, each arm’s behavior, comparative direction, evidence replay, and release qualification as distinct results. | A blocked backend or missing grading receipt still makes a comparison unavailable. Mixed-arm, cancellation, capture-failure and tamper controls preserve both valid negative results and incomplete results. |
@@ -214,6 +214,19 @@ For each supported configuration, agree on the model, host version, surface, OS,
 - **Delegation (AX-04, AX-05, AX-08).** Independently observe brief delivery, relevant policy and requirements at the worker boundary, and parent verification of the actual result. A native worker-start event or the parent’s own success report is insufficient evidence.
 
 Record individually observed critical violations, including premature dependent edits, fabricated required verification, and consequential loss of delegated requirements. An unresolved critical violation blocks the corresponding qualification criterion. An isolated behavioral failure remains in the record. If it leaves a mandatory outcome failed, the qualification stays incomplete until fresh evidence satisfies a prospective, reviewed plan. Reviewer disposition, counts and averages cannot convert a valid failure into a pass. Axiom-owned defects require a regression and fresh deterministic evidence.
+
+### Authorized Linux ordinary-session plan
+
+Use GPT-6 Luna in the pinned Codex 0.172.0-alpha.2 and Hermes 0.23.3 native CLI sessions. Allow one Axiom-enabled attempt per row and host, with a 120-second wall-clock limit per session, and one active session per host. Each attempt starts with a clean writable fixture and disposable installed profile. Stage the fixture and policy from the same reviewed revision. Use the case prompt as written. These trials measure Axiom-enabled conformance. Historical paired results remain comparative evidence. Claude remains a required host and its real-model trials remain unrun.
+
+| Trial | Reviewed case | Independent evidence |
+| --- | --- | --- |
+| Semantic clarification | `resolve-format-decision` | Issue read, actual delivered question, completed or waiting turn, edit observations and unchanged dependent work. |
+| Settled work | `settled-catalog-repair` | Reads and tool order, delivered source, regression and acceptance results, and any unnecessary requests. |
+| Reuse | `reuse-summary-formatter` | Original formatter reuse and scope of the delivered change. |
+| Verification reporting | `report-unavailable-preview` | Independent native preview availability and the delivered report. |
+| Applicable profiles | `angular-nx.workspace` | Observed Angular/Nx and inherited atomic UI identity, structure checks and native tooling results. |
+| Delegation | `preserve-delegated-requirements` | Worker-linked requirements and policy, result inspection, integrated source and parent verification. Report missing observation separately from demonstrated failures. |
 
 ### Issue #19 criterion status
 
