@@ -154,10 +154,20 @@ test.each([
     inconsistent.results.behavior.without_axiom = { status: "blocked", reason: "Forged summary result." };
     expect((await replayAltered(inconsistent)).outcome.status).toBe("blocked");
     if (comparison === "improved") {
-      archived.report.attempts[1].outcome = { status: "passed" };
-      archived.results.behavior.without_axiom = { status: "passed" };
-      archived.results.comparisons[0].outcome = "same";
-      expect((await replayAltered(archived)).outcome.status).toBe("blocked");
+      const changedGrade = structuredClone(archived);
+      changedGrade.report.attempts[1].outcome = { status: "passed" };
+      changedGrade.results.behavior.without_axiom = { status: "passed" };
+      changedGrade.results.comparisons[0].outcome = "same";
+      expect((await replayAltered(changedGrade)).outcome.status).toBe("blocked");
+      const hiddenFailure = structuredClone(archived);
+      delete hiddenFailure.results;
+      hiddenFailure.report.attempts[1].outcome = { status: "blocked", reason: "Forged incomplete outcome." };
+      expect((await replayAltered(hiddenFailure)).outcome.status).toBe("blocked");
+      const swappedArms = structuredClone(archived);
+      delete swappedArms.results;
+      swappedArms.report.attempts[0].mode = "without_axiom";
+      swappedArms.report.attempts[1].mode = "with_axiom";
+      expect((await replayAltered(swappedArms)).outcome.status).toBe("blocked");
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
