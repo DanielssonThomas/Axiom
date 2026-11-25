@@ -44,8 +44,7 @@ export type BenchmarkArchive = Control & {
   results?: ReturnType<typeof summarizeBenchmarkResults>;
 };
 
-function armOutcome(attempts: readonly BenchmarkAttempt[]): EvidenceOutcome {
-  const results = attempts.map((attempt) => attempt.outcome);
+function armOutcome(results: readonly EvidenceOutcome[]): EvidenceOutcome {
   return results.find(({ status }) => status === "failed")
     ?? results.find(({ status }) => status === "blocked")
     ?? results.find(({ status }) => status === "not_run")
@@ -63,11 +62,14 @@ export function summarizeBenchmarkResults({ report, observations, sourceFresh }:
     && !!observations[attempt.id] && adjudicated(attempt.outcome.status)
     && attempt.assertions.every(({ required, evidenceId, outcome }) => !required ||
       (!!evidenceId && adjudicated(outcome.status)));
+  const behavior = (attempts: readonly BenchmarkAttempt[]) => armOutcome(attempts.map((attempt) =>
+    sourceFresh && (complete(attempt) || attempt.outcome.status === "not_run") ? attempt.outcome
+      : { status: "blocked", reason: "No fresh, complete behavioral grade was recorded for an attempt." }));
   const comparisons = withAxiom.map((attempt) => {
     const { case: { id, version }, repetition } = attempt;
     const paired = baseline.find((candidate) => candidate.case.id === id && candidate.case.version === version
       && candidate.repetition === repetition);
-    const outcome = sourceFresh && paired && complete(attempt) && complete(paired)
+    const outcome: "same" | "improved" | "regressed" | "unavailable" = sourceFresh && paired && complete(attempt) && complete(paired)
       ? attempt.outcome.status === paired.outcome.status ? "same" : attempt.outcome.status === "passed" ? "improved" : "regressed"
       : "unavailable";
     const timings = attempt.execution && paired?.execution &&
@@ -80,7 +82,7 @@ export function summarizeBenchmarkResults({ report, observations, sourceFresh }:
     && withAxiom.length === baseline.length && comparisons.every(({ outcome }) => outcome !== "unavailable")
     ? { status: "passed" }
     : { status: "blocked", reason: "At least one planned pair lacks fresh, complete execution and grading evidence." };
-  return { execution, behavior: { with_axiom: armOutcome(withAxiom), without_axiom: armOutcome(baseline) }, comparisons };
+  return { execution, behavior: { with_axiom: behavior(withAxiom), without_axiom: behavior(baseline) }, comparisons };
 }
 
 export class UnsupportedBenchmarkCase extends Error {}

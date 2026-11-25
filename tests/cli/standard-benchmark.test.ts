@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -113,7 +114,11 @@ test("replays the graded arm when a completed native arm could not be captured",
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 20_000);
 
-test("keeps successful execution, Axiom behavior, baseline failures, and replay distinct", async () => {
+test.each([
+  ["passed", "failed", "improved"],
+  ["failed", "passed", "regressed"],
+  ["failed", "failed", "same"],
+] as const)("keeps execution and replay distinct when Axiom %s and baseline %s", async (axiom, baseline, comparison) => {
   const root = await mkdtemp(join(tmpdir(), "axiom-standard-comparison-"));
   const digest = `sha256:${"c".repeat(64)}` as const;
   try {
@@ -122,20 +127,28 @@ test("keeps successful execution, Axiom behavior, baseline failures, and replay 
     }, host, "injected", async () => ({
       policy: { version: "1", digest, profiles: [] }, bundleDigest: digest,
       backend: { async run(request) {
-        if (request.mode === "with_axiom") await writeFile(join(request.workspace, "command.mjs"), patchedCommand);
+        const expected = request.mode === "with_axiom" ? axiom : baseline;
+        if (expected === "passed") await writeFile(join(request.workspace, "command.mjs"), patchedCommand);
         return { requestId: request.id, host, outcome: { status: "passed" }, durationMs: 2, artifacts: [],
           usage: { metering: "unknown", reason: "Fixture usage unavailable." } };
       } },
     }));
     const results = { execution: { status: "passed" },
-      behavior: { with_axiom: { status: "passed" }, without_axiom: { status: "failed" } },
-      comparisons: [{ case: "reuse-summary-formatter", version: "1", repetition: 1, outcome: "improved" }],
+      behavior: { with_axiom: { status: axiom }, without_axiom: { status: baseline } },
+      comparisons: [{ case: "reuse-summary-formatter", version: "1", repetition: 1, outcome: comparison }],
     };
     expect(result.report).toMatchObject({ results, report: { outcome: { status: "failed" } },
       qualification: { status: "blocked" } });
     if (!result.report) throw new Error("Expected an archive.");
     const replay = await reviewNativeBenchmark(repository, result.report.evidenceDirectory, result.report.evidenceDigest);
     expect(replay).toMatchObject({ outcome: { status: "passed" }, report: { results, benchmarkOutcome: { status: "failed" } } });
+    const receipt = join(result.report.evidenceDirectory, "benchmark.json");
+    const archived = JSON.parse(await readFile(receipt, "utf8"));
+    archived.results.behavior.without_axiom = { status: "blocked", reason: "Forged summary result." };
+    const altered = JSON.stringify(archived);
+    await writeFile(receipt, altered);
+    const digest = `sha256:${createHash("sha256").update(altered).digest("hex")}`;
+    expect((await reviewNativeBenchmark(repository, result.report.evidenceDirectory, digest)).outcome.status).toBe("blocked");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

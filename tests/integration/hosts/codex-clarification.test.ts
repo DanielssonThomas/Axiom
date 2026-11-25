@@ -127,17 +127,16 @@ test.runIf(executable && (process.platform === "linux" || windows))(
         expect(loopback.requests[2]!.toolResults[1]).toContain(fixture.trim());
       }
 
-      client!({ id: Number(ask.id) + 100, result: { answers: { format: { answers: ["CSV"] } } } });
+      const answer = { answers: { format: { answers: ["CSV"] } } };
+      client!({ id: Number(ask.id) + 100, result: answer });
       await delay(300, undefined, { signal });
       expect(loopback.requests).toHaveLength(askRequestCount);
       expect(await readFile(project, "utf8")).toBe(fixture);
-      client!({ id: ask.id, result: { answers: {} } });
+      client!({ id: ask.id, result: answer });
       const terminal = await receive(({ method }) => method === "turn/completed");
       expect(terminal).toMatchObject({ params: { threadId, turn: { id: turnId, status: "completed" } } });
       expect(loopback.requests).toHaveLength(askRequestCount + 1);
-      expect(JSON.parse(loopback.requests.at(-1)!.toolResults.at(-1)!)).toEqual({
-        answers: { format: { answers: ["CSV"] } },
-      });
+      expect(JSON.parse(loopback.requests.at(-1)!.toolResults.at(-1)!)).toEqual(answer);
       const delivered = await readFile(project, "utf8");
       expect(delivered).toBe(fixture);
       expect(await readdir(profile.workspace)).toEqual([fixtureName]);

@@ -160,7 +160,7 @@ test.runIf(executable && process.platform === "linux")(
       expect(loopback.requests[1]?.toolResults).toEqual([expect.stringContaining("The request leaves the target audience undecided.")]);
       expect(await snapshotFixture(workspace)).toEqual(before);
 
-      const answer = { request_id: prompt.prompt_id, execution_generation: prompt.execution_generation, answer: "" };
+      const answer = { request_id: prompt.prompt_id, execution_generation: prompt.execution_generation, answer: choices[1]! };
       const clarify = `${route}/clarify`;
       for (const [invalid, error] of [
         [{ ...answer, execution_generation: answer.execution_generation + 1 }, "stale_generation"],
