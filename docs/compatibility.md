@@ -98,6 +98,23 @@ On Linux, Hermes Agent 0.23.3 exposed a native pending clarification through the
 
 On Linux, Codex 0.172.0-alpha.2 exposed a blocking `item/tool/requestUserInput` request through the stdio app-server in Plan mode with experimental API capabilities enabled. A disposable Axiom profile and a scripted localhost provider exercised the reviewed report-format fixture. Native tools confirmed that the workspace was read-only and that they could not read a synthetic private file in the profile. A response with a wrong JSON-RPC ID left the turn waiting. The matching response carried no answers and resumed the turn without changing the fixture. The independent grader passed the completed issue read and correlated question and failed the observation with the question removed. External-model clarification and installed app-server behavior on macOS remain `not_run`.
 
+### Signed-in clarification
+
+The Linux standard benchmark uses the Codex Plan app-server or the authenticated Hermes gateway Runs API for the two reviewed clarification cases. Run these cases separately from CLI reuse and preview reporting. The verifier withholds the project decision and records the independently observed issue read and the matching native clarification control. Replay runs the existing grader on the archived actions and fixture snapshots.
+
+```sh
+BASELINE=$(git rev-parse HEAD)
+for host in codex hermes; do
+  for case in clarify-material-decision resolve-format-decision; do
+    node packages/cli/dist/index.js benchmark "$host" --mode standard --preflight \
+      --baseline "$BASELINE" --model gpt-6-luna --case "$case" \
+      --repetitions 1 --max-attempts 2 --timeout-seconds 120
+  done
+done
+```
+
+Use the existing account roots and select the pinned executables with `--auth-home` and `--program` where needed. Authorize four case pairs with two attempts per pair, eight attempts total, and 120 seconds per pair. After approval, replace `--preflight` with `--allow-native` and replay each private archive. [Benchmark replay](install.md#review-the-saved-evidence)
+
 The same pinned Linux app-server resumed a persisted thread after the Axiom bundle was updated. The actual provider input carried the previous conversation and the updated installed policy. A native `thread/compact/start` completed in the same thread, and the next turn carried the updated policy. After disabling Axiom and restarting the app-server, the previously active thread still sent that policy to the provider. A fresh thread in the disabled profile omitted it. This retained context blocks general resume and compaction enforcement. The fixture used a scripted localhost provider.
 
 The hosted Windows job runs that same Plan-mode probe and a separate native `exec` lifecycle fixture with the pinned Windows executable. It stages assembled Axiom artifacts through Codex's local marketplace in a disposable profile. Only a run that observes the installed and updated policy, the corresponding missing-activation and disabled controls, removal, and blocking Plan-mode clarification emits both Windows receipts. The fixtures use a scripted localhost provider. The production Axiom installer, model behavior, and production worker evidence stay outside this check.

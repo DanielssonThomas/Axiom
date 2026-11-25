@@ -92,8 +92,9 @@ export async function runHermesClarification(launch: Launch, directory: string, 
         admission = state.admission_id;
       }
       if (typeof state.status === "string" && terminal.has(state.status)) {
-        if (state.status !== "completed" || !admission || record(state.runtime).model !== request.host.model ||
-            record(state.runtime).provider !== provider) return;
+        const runtime = record(state.runtime);
+        if (state.status !== "completed" || !admission || (runtime.model && runtime.model !== request.host.model) ||
+            (runtime.provider && runtime.provider !== provider)) return;
         break;
       }
       if (Array.isArray(state.pending_controls) && state.pending_controls.length) {
@@ -117,8 +118,11 @@ export async function runHermesClarification(launch: Launch, directory: string, 
     const events = stream.split("\n").filter((line) => line.startsWith("data: "))
       .map((line) => record(JSON.parse(line.slice(6))));
     if (events.at(-1)?.event !== "run.completed" || events.some((event, index) => event.run_id !== run || event.seq !== index)) return;
-    const tools = (await readFile(observation, "utf8")).split("\n").filter(Boolean).map((line) => record(JSON.parse(line)));
-    return observations(events, tools, answered, classify);
+    const receipts = (await readFile(observation, "utf8")).split("\n").filter(Boolean).map((line) => record(JSON.parse(line)));
+    // The pinned Runs API can omit the served model even for a completed turn.
+    const models = receipts.filter(({ kind }) => kind === "served-model");
+    if (models.length !== 1 || models[0]?.model !== request.host.model) return;
+    return observations(events, receipts.filter(({ kind }) => kind !== "served-model"), answered, classify);
   } finally {
     await gateway.stop();
   }

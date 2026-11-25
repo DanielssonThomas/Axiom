@@ -11,9 +11,10 @@ const blocked = { action: "block", message: "This benchmark permits file access 
 const allowedFiles = new Set(["read_file", "write_file", "search_files", "patch"]);
 const edits = new Set(["write_file", "patch"]);
 interface HookEvent {
+  hook_event_name?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
-  extra?: { tool_call_id?: string };
+  extra?: { tool_call_id?: string; model?: string };
 }
 
 async function guard(workspace: string, event: HookEvent) {
@@ -52,6 +53,13 @@ async function guard(workspace: string, event: HookEvent) {
 
 async function clarificationGuard(workspace: string, observation: string, event: HookEvent) {
   const { tool_name: tool, extra } = event;
+  if (event.hook_event_name === "post_llm_call") {
+    const model = extra?.model;
+    if (typeof model === "string" && /^[\w./:-]{1,160}$/.test(model)) {
+      await appendFile(observation, JSON.stringify({ kind: "served-model", model }) + "\n");
+    }
+    return {};
+  }
   if (tool === "clarify") return {};
   const editing = typeof tool === "string" && edits.has(tool);
   const verdict = editing ? blocked : await guard(workspace, event);

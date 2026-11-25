@@ -62,6 +62,8 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
       if (created.code !== 0 || !directory) return blocked("The disposable Hermes profile could not be created.");
       const observation = clarify ? join(directory, "clarification-tools.jsonl") : undefined;
       if (observation) await writeFile(observation, "", { flag: "wx", mode: 0o600 });
+      const hook = { command: [process.execPath, guard, request.workspace, ...(observation ? [observation] : [])]
+        .map((part) => JSON.stringify(part)).join(" "), timeout: 5, fail_closed: true };
       await writeFile(join(directory, "config.yaml"), JSON.stringify({
         _config_version: 54, gateway: { standalone: true }, hooks_auto_accept: true,
         // The native launch guard checks the named profile's configuration before resolving the default OAuth login.
@@ -69,9 +71,7 @@ export function createHermesAccountBackend(options: AccountBackendOptions): Benc
         ...(clarify ? { platform_toolsets: { api_server: [...accountToolsets, "clarify"] },
           auxiliary: { title_generation: { enabled: false } }, kanban: { dispatch_in_gateway: false } }
           : request.caseId === options.previewCaseId ? { platform_toolsets: { cli: accountToolsets } } : {}),
-        hooks: { pre_tool_call: [{ command: [process.execPath, guard, request.workspace, ...(observation ? [observation] : [])]
-          .map((part) => JSON.stringify(part)).join(" "),
-          timeout: 5, fail_closed: true }] },
+        hooks: { pre_tool_call: [hook], ...(clarify && { post_llm_call: [hook] }) },
       }), { mode: 0o600 });
       const auth = await runHermes({ ...command, args: ["--profile", profile, "auth", "status", provider] });
       if (auth.code !== 0 || !/^openai-codex: logged in\s*$/m.test(auth.stdout)) {
