@@ -29,7 +29,7 @@ for (const [agent, binary] of [["codex", process.env.AXIOM_TEST_CODEX_BINARY], [
           "test ! -r " + shellLiteral(join(authHome, "auth.json")),
           "test ! -r " + shellLiteral(join(profile, "auth.json")),
           "test ! -w " + shellLiteral(skill),
-          "cat " + shellLiteral(skill),
+          'while IFS= read -r line; do printf "%s\\n" "$line"; done < ' + shellLiteral(skill),
         ].join(" && ");
         return { name: "exec_command", arguments: JSON.stringify({ cmd: command }) };
       }
