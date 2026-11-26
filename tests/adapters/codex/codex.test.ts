@@ -83,6 +83,8 @@ test("routes the full project RED and digest-bound worker reference through the 
   await mkdir(join(workspace, ".axiom"), { recursive: true });
   await writeFile(join(workspace, "AGENTS.md"), "The relevant verification command is `node --test`.\n");
   expect(built.instructions).toContain("Run the complete repository verification command as its own shell call");
+  expect(built.instructions).toContain("When the project requires a regression test");
+  expect(built.instructions).toContain("Keep verification edits within the task scope");
   expect(built.instructions).toContain("at .axiom/<task_name>.json");
   const workflow = join(plugin, "hooks", "workflow.mjs");
   const call = (tool: string, input: object) => {

@@ -72,7 +72,8 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
   const policyBody = [input.catalog.core.text, ...profiles].map((document) =>
     document.replaceAll("\r\n", "\n").trimEnd()).join("\n\n");
   const workflow = [
-    ...(skills.verify ? ["Open axiom:verify before editing executable behavior. Save the regression first. "
+    ...(skills.verify ? ["Keep verification edits within the task scope. Reuse existing tests or a temporary check for changes that reuse existing behavior. "
+      + "When the project requires a regression test, open axiom:verify and save the regression before changing implementation. "
       + "Run the complete repository verification command as its own shell call, with the existing protected acceptance checks. "
       + "Observe the expected failure before the repair. Repeat the full command after the repair."] : []),
     ...(skills.delegate ? ["Open axiom:delegate before launching a worker. For native Codex V2, write the complete JSON TaskBrief "
