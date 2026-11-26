@@ -68,7 +68,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       if ("interrupted" in gateway) throw new Error("The disposable native Hermes gateway did not start.");
       try {
         const trials = ["present", "missing-brief", "provider-rejected",
-          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : ["pretty-printed-brief", "incomplete-typed-brief"])];
+          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : ["pretty-printed-brief", "incomplete-typed-brief", "extended-typed-brief"])];
         const inspect = profiled ? inspectHermesWorkerProfileRetrieval : inspectHermesWorkerDelivery;
         for (const trial of trials) {
           loopback.requests.length = 0;
@@ -76,7 +76,10 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           const observedContext = trial === "pretty-printed-brief"
             ? "Axiom scoped worker brief:\n" + JSON.stringify(brief, null, 2)
             : trial === "incomplete-typed-brief"
-              ? "Axiom scoped worker brief:\n" + JSON.stringify({ policy: brief.policy }) : formatted;
+              ? "Axiom scoped worker brief:\n" + JSON.stringify({ policy: brief.policy })
+              : trial === "extended-typed-brief"
+                ? "Axiom scoped worker brief:\n" + JSON.stringify({ ...brief, notes: "Keep the reviewed fallback." }) : formatted;
+          const deliveredContext = trial === "extended-typed-brief" ? formatted : observedContext;
           const selectedProfiles = trial === "inherited-read" ? profiles.slice(0, 1)
             : trial === "missing-profile" ? profiles.slice(1)
             : trial === "retrieval-rejected" ? profiles.toReversed() : profiles;
@@ -138,7 +141,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           const receipt = await readFile(join(selected, ".axiom-hermes", `delegated-${workerId}.json`), "utf8");
           expect(receipt).not.toContain(brief.objective);
           expect(receipt).not.toContain(observedContext);
-          expect(JSON.parse(receipt).briefDigest).toBe(includeBrief ? hash(observedContext) : null);
+          expect(JSON.parse(receipt).briefDigest).toBe(includeBrief ? hash(deliveredContext) : null);
           const childRequests = loopback.requests.filter(({ text }) => text.includes(brief.objective) && !text.includes(parentPrompt));
           expect(childRequests).toHaveLength(selectedProfiles.length + 1);
           expect(childRequests[0]?.model).toBe(model);
@@ -156,7 +159,11 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
               "Copy this exact object into the policy field: " + JSON.stringify(artifact.manifest.policy),
             ))).toBe(true);
           }
-          expect(childRequests[0]?.text.includes(observedContext)).toBe(includeBrief);
+          expect(childRequests[0]?.text.includes(deliveredContext)).toBe(includeBrief);
+          if (trial === "extended-typed-brief") {
+            expect(childRequests[0]?.userMessages.some((message) => message.includes("Keep the reviewed fallback."))).toBe(true);
+            expect(childRequests[0]?.text.includes(observedContext)).toBe(false);
+          }
           if (trial === "pretty-printed-brief") {
             expect(inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief, formatted).outcome.status)
               .toBe("failed");

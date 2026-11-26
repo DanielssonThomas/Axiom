@@ -25,4 +25,5 @@ const result = directory && archive && event === "pre-tool"
   })
   : { outcome: { status: "blocked", reason: "The Hermes hook invocation is invalid." } };
 console.log(JSON.stringify({ ...result.outcome,
-  ...("workerBriefCorrection" in result && { workerBriefCorrection: result.workerBriefCorrection }) }));
+  ...("workerBriefCorrection" in result && { workerBriefCorrection: result.workerBriefCorrection }),
+  ...("workerBriefPatches" in result && { workerBriefPatches: result.workerBriefPatches }) }));

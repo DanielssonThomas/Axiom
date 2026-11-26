@@ -76,12 +76,13 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
       + "Run the complete repository verification command as its own shell call, with the existing protected acceptance checks. "
       + "Observe the expected failure before the repair. Repeat the full command after the repair."] : []),
     ...(skills.delegate ? ["Open axiom:delegate before launching a worker. For native Codex V2, write the complete JSON TaskBrief "
-      + "under .axiom/<worker-id>.json. Include the parent and worker IDs, objective, ownedPaths, criteria with id/description/required, "
-      + "requiredCapabilities, limits with timeoutMs/maxAttempts/maxConcurrency, and this exact policy object: "
-      + JSON.stringify(policy) + ". Run sha256sum -- <path> by itself before spawning. In the native worker message include "
-      + "a line Axiom worker reference: <path> sha256:<hex> using the actual digest. Tell the worker to read that file with a "
-      + "standalone cat -- <path> command before editing. After the worker returns, inspect the delivered source, remove the temporary "
-      + "brief, and run the complete verification command by itself."] : []),
+      + "at .axiom/<task_name>.json. Use the same lowercase underscore-separated value for id, file stem, and native task_name. "
+      + "Use exactly these top-level fields: id, parentId, objective, ownedPaths, criteria, requiredCapabilities, limits, policy. "
+      + "Put supplemental task details inside objective. Each criterion has id, description, and required. Each limits object has "
+      + "timeoutMs, maxAttempts, and maxConcurrency. Copy this exact object into policy: " + JSON.stringify(policy)
+      + ". Run sha256sum -- <path> by itself before spawning. Give the worker the reference path and actual digest in the native "
+      + "message. As the worker, read that exact file with a standalone cat -- <path> command before editing and check the digest. "
+      + "After the worker returns, inspect the delivered source, remove the temporary brief, and run the complete verification command by itself."] : []),
   ];
   const instructions = [`Axiom policy digest: ${policy.digest}`, policyBody, ...workflow].join("\n\n");
   if (instructions.includes(startMarker) || instructions.includes(endMarker)) throw new Error("Axiom content contains a reserved profile marker.");

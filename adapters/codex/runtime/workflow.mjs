@@ -1,12 +1,14 @@
-import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-const handoff = /^Axiom worker reference: (\.axiom\/[a-zA-Z0-9_-]+\.json) (sha256:[0-9a-f]{64})$/gm;
+const taskName = /^[a-z0-9][a-z0-9_]{0,127}$/;
+const hashCommand = /^sha256sum(?: --)? (\.axiom\/[a-z0-9][a-z0-9_]{0,127}\.json)$/;
 const fullNodeTest = /\bverification command is `node --test`[.!]?(?:[ \t]|$)/im;
 const useFullTest = "Run the documented verification command node --test by itself so the regression and protected acceptance checks run together.";
-const prepareBrief = "Read axiom:delegate. Write the complete scoped JSON brief in .axiom/<worker-id>.json and run its SHA-256 as a separate shell call. Include a line Axiom worker reference: <path> sha256:<hex> in the native worker message.";
+const prepareBrief = "Save the canonical Axiom task brief at .axiom/<task_name>.json. "
+  + "Match the brief id, file stem, and native task_name. Run sha256sum -- on the file as a separate shell call. "
+  + "Give the worker the path and digest in the native handoff. Its first shell call must be cat -- on that file.";
 const selectedPolicy = new URL("../axiom-policy.json", import.meta.url);
 
 function decision(fields) {
@@ -25,37 +27,46 @@ async function boundedFile(root, path, limit) {
   if (bytes.length <= limit) return bytes;
 }
 
+async function briefProblem(cwd, path) {
+  try {
+    const bytes = await boundedFile(await realpath(cwd), path, 16_384);
+    if (!bytes) return prepareBrief;
+    const brief = JSON.parse(bytes.toString("utf8"));
+    const { policy, workerFields } = JSON.parse(await readFile(selectedPolicy, "utf8"));
+    if (!brief || Object.keys(brief).length !== workerFields.length || !workerFields.every((name) => Object.hasOwn(brief, name))) {
+      return "Use exactly these Axiom task brief fields: " + workerFields.join(", ")
+        + ". Put supplemental task details inside objective or the native worker message.";
+    }
+    if (typeof brief.parentId !== "string" || !brief.parentId || brief.id === brief.parentId ||
+        path !== ".axiom/" + brief.id + ".json" || !isDeepStrictEqual(brief.policy, policy)) return prepareBrief;
+  } catch {
+    return prepareBrief;
+  }
+}
+
 async function assess(event) {
   if (event.hook_event_name !== "PreToolUse") return {};
   const input = event.tool_input;
   if (event.tool_name === "Bash" && typeof input?.command === "string") {
     const command = input.command.trim();
-    if (!/^node[ \t]+--test[ \t]+\S/.test(command)) return {};
     const cwd = input.workdir ?? event.cwd;
     if (typeof cwd !== "string" || !isAbsolute(cwd)) return {};
+    const reference = hashCommand.exec(command)?.[1];
+    if (reference) {
+      const problem = await briefProblem(cwd, reference);
+      return problem ? deny(problem) : {};
+    }
+    if (!/^node[ \t]+--test[ \t]+\S/.test(command)) return {};
     const rules = await boundedFile(await realpath(cwd), "AGENTS.md", 128_000).catch(() => undefined);
     return rules && fullNodeTest.test(rules.toString("utf8")) ? deny(useFullTest) : {};
   }
   if (event.tool_name !== "collaborationspawn_agent") return {};
-  if (!input || typeof input.message !== "string" || !isAbsolute(event.cwd ?? "")) return deny(prepareBrief);
-
-  const matches = [...input.message.matchAll(handoff)];
-  if (matches.length !== 1) return deny(prepareBrief);
-  const [, path, expectedDigest] = matches[0];
-  try {
-    const bytes = await boundedFile(await realpath(event.cwd), path, 16_384);
-    if (!bytes || "sha256:" + createHash("sha256").update(bytes).digest("hex") !== expectedDigest) return deny(prepareBrief);
-    const brief = JSON.parse(bytes.toString("utf8"));
-    const { policy, workerFields } = JSON.parse(await readFile(selectedPolicy, "utf8"));
-    if (!brief || !workerFields.every((name) => Object.hasOwn(brief, name)) ||
-        typeof brief.parentId !== "string" || !brief.parentId || brief.id === brief.parentId ||
-        !isDeepStrictEqual(brief.policy, policy)) return deny(prepareBrief);
-  } catch {
+  if (typeof input?.task_name !== "string" || !taskName.test(input.task_name) || !isAbsolute(event.cwd ?? "")) {
     return deny(prepareBrief);
   }
-  const firstRead = "Before attempting an edit, run cat -- " + path + " in its own shell call and read the whole brief.";
-  const validate = "Check its SHA-256 against " + expectedDigest + ". Apply the brief's ownership, requirements, and limits.";
-  return decision({ updatedInput: { ...input, message: input.message + "\n\n" + firstRead + " " + validate } });
+  // The hosted V2 worker message is opaque. Only use the separately staged brief.
+  const problem = await briefProblem(event.cwd, ".axiom/" + input.task_name + ".json");
+  return problem ? deny(problem) : {};
 }
 
 process.stdin.setEncoding("utf8");

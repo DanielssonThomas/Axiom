@@ -60,9 +60,27 @@ def _marked_worker_contexts(tool_name, args):
     if str(args.get("action") or "spawn").strip().lower() != "spawn":
         return []
     tasks = args.get("tasks")
-    contexts = [task.get("context") for task in tasks if isinstance(task, dict)] if isinstance(tasks, list) else [args.get("context")]
-    return [context[len(WORKER_BRIEF):] for context in contexts
+    entries = enumerate(tasks) if isinstance(tasks, list) else [(None, args)]
+    contexts = [(index, task.get("context")) for index, task in entries if isinstance(task, dict)]
+    return [(index, context[len(WORKER_BRIEF):]) for index, context in contexts
             if isinstance(context, str) and context.startswith(WORKER_BRIEF)]
+
+
+def _replace_worker_contexts(args, indices, patches):
+    tasks = args.get("tasks")
+    copies = list(tasks) if isinstance(tasks, list) else None
+    for index, patch in zip(indices, patches, strict=True):
+        if patch is None:
+            continue
+        task = args if index is None else copies[index]
+        goal = task.get("goal")
+        if not isinstance(goal, str):
+            raise ValueError("Expected a native worker goal.")
+        updated_goal = goal + "\n\nSupplemental task details from the parent, subject to the scoped brief.\n" + patch["notes"]
+        if index is None:
+            return {"action": "modify", "args": {"goal": updated_goal, "context": patch["context"]}}
+        copies[index] = {**task, "goal": updated_goal, "context": patch["context"]}
+    return {"action": "modify", "args": {"tasks": copies}} if copies is not None else None
 
 
 def _hook(bundle, folder, identity, instance, checker_digest):
@@ -76,8 +94,9 @@ def _hook(bundle, folder, identity, instance, checker_digest):
             try:
                 if checker.resolve() != checker or _digest(checker.read_bytes()) != checker_digest:
                     raise ValueError("Installed Axiom checker differs from its bundle inventory.")
-                briefs = _marked_worker_contexts(kwargs.get("tool_name"), kwargs.get("args"))
-                encoded = json.dumps(briefs) if briefs else ""
+                args = kwargs.get("args")
+                briefs = _marked_worker_contexts(kwargs.get("tool_name"), args)
+                encoded = json.dumps([context for _, context in briefs]) if briefs else ""
                 if len(encoded) > 256_000:
                     return {"action": "block", "message": "The structured Axiom worker brief exceeds the supported size."}
                 result = subprocess.run(
@@ -87,7 +106,10 @@ def _hook(bundle, folder, identity, instance, checker_digest):
                 returned = json.loads(result.stdout)
                 if returned["status"] == "passed":
                     correction = returned.get("workerBriefCorrection")
-                    return {"action": "block", "message": correction} if correction else None
+                    if correction:
+                        return {"action": "block", "message": correction}
+                    patches = returned.get("workerBriefPatches")
+                    return _replace_worker_contexts(args, [index for index, _ in briefs], patches) if patches else None
                 if returned["status"] in ("failed", "blocked") and isinstance(returned["reason"], str):
                     outcome = returned
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

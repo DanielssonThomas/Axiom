@@ -331,6 +331,12 @@ The pinned Codex tool profile grants read-only access to the installed Axiom ski
 
 Run one fresh writable ordinary-session trial for each affected settled-work and delegation criterion on Codex and Hermes after successful preflight. Use the unchanged case prompts, the installed candidate, GPT-6 Luna, and a 120-second limit. Allow one session at a time per host. The handoff case requires one linked worker with a 30-second limit. The verifier retains failures, checks the parent result against the final delivered source, and records all four outcomes individually.
 
+### Native workflow guards
+
+The Codex distribution registers a native plugin hook. Approve the installed hook through Codex's native trust controls on a profile that will use it. It checks the staged brief named by the V2 task before launch and gives corrective feedback for a direct narrowed Node test invocation when the repository declares the complete command. Codex V2 messaging remains opaque to the hook. The qualification verifier matches the native parent's digest and the linked worker's actual file read separately.
+
+On Hermes, the installed plugin validates a marked structured handoff against the canonical task schema and active policy before dispatch. Supplemental fields travel with the parent goal while the worker context carries the canonical brief. The first-request receipt records the digest of the bytes accepted by the native worker.
+
 ### Issue #19 criterion status
 
 The pinned Linux distribution tests exercise rollback from a newer fixture artifact to the reviewed earlier artifact using the native Claude marketplace, Codex lifecycle, and Hermes Git install routes. They check restored artifact or runtime identity and preservation of unrelated settings. Release-specific rollback remains part of [#20](https://github.com/DanielssonThomas/Axiom/issues/20).

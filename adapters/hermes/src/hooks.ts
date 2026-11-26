@@ -7,7 +7,7 @@ import type { Evidence, EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { assessPolicy } from "@axiom/policy";
 import { digest, readBundle, verifyBundle } from "./bundle.js";
-import { inspectHermesActivation } from "./profile.js";
+import { formatHermesWorkerContext, inspectHermesActivation } from "./profile.js";
 import type { HermesProfile } from "./profile.js";
 
 const checkId = "hermes-bundle-integrity";
@@ -18,21 +18,33 @@ interface HookObservation {
   outcome: EvidenceOutcome;
   evidence?: Evidence;
   workerBriefCorrection?: string;
+  workerBriefPatches?: Array<{ context: string; notes: string } | null>;
 }
 
-function checkWorkerBriefs(contexts: readonly string[], policy: Evidence["policy"]): string | undefined {
-  const hasInvalid = contexts.some((context) => {
-    try {
-      const parsed = taskBriefSchema.safeParse(JSON.parse(context));
-      return !parsed.success || !parsed.data.parentId || parsed.data.parentId === parsed.data.id
-        || !isDeepStrictEqual(parsed.data.policy, policy);
-    } catch {
-      return true;
+const briefFields = new Set(Object.keys(taskBriefSchema.shape));
+
+function checkWorkerBriefs(contexts: readonly string[], policy: Evidence["policy"]) {
+  const patches: NonNullable<HookObservation["workerBriefPatches"]> = [];
+  try {
+    for (const context of contexts) {
+      const raw: unknown = JSON.parse(context);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid worker brief.");
+      const entries = Object.entries(raw);
+      const brief = taskBriefSchema.parse(Object.fromEntries(entries.filter(([key]) => briefFields.has(key))));
+      if (!brief.parentId || brief.parentId === brief.id || !isDeepStrictEqual(brief.policy, policy)) {
+        throw new Error("Worker brief names a different policy or omits parent lineage.");
+      }
+      const extra = entries.filter(([key]) => !briefFields.has(key));
+      patches.push(extra.length ? {
+        context: formatHermesWorkerContext(brief),
+        notes: JSON.stringify(Object.fromEntries(extra)),
+      } : null);
     }
-  });
-  if (hasInvalid) {
-    return "Provide the complete Axiom worker brief in the marked context before launching. Include id, parentId, objective, "
-      + "ownedPaths, policy, criteria, requiredCapabilities and limits. Use the exact effective policy object and the task's actual requirements.";
+    return patches.some(Boolean) ? { workerBriefPatches: patches } : {};
+  } catch {
+    return { workerBriefCorrection: "Provide the complete Axiom worker brief in the marked context before launching. "
+      + "Use the task's actual id, parentId, objective, ownedPaths, criteria, requiredCapabilities and limits. "
+      + "Copy the effective policy into policy with its exact version, digest and profiles." };
   }
 }
 
@@ -94,9 +106,9 @@ export async function checkHermesEvent(
       provenance: "observed", artifacts: [], outcome,
     });
     await new EvidenceStore(archive).record("acceptance", evidence);
-    const workerBriefCorrection = outcome.status === "passed" && native?.workerBriefs?.length
-      ? checkWorkerBriefs(native.workerBriefs, manifest.policy) : undefined;
-    return { outcome, evidence, ...(workerBriefCorrection && { workerBriefCorrection }) };
+    const workerBrief = outcome.status === "passed" && native?.workerBriefs?.length
+      ? checkWorkerBriefs(native.workerBriefs, manifest.policy) : {};
+    return { outcome, evidence, ...workerBrief };
   } catch {
     return { outcome: { status: "blocked", reason: "The Hermes lifecycle evidence archive could not be written." } };
   }
