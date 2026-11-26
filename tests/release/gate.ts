@@ -69,6 +69,9 @@ function checkReceipts(row: RecordFields, kind: string) {
   const [red, green] = checks as [typeof checks[number], typeof checks[number]];
   const protectedTest = "catalog command acceptance";
   const regression = "formats multiword catalog keys";
+  const expectedTests = [protectedTest, "formats a single catalog word", regression];
+  requireCheck([red, green].every(({ tests }) => tests.size === expectedTests.length &&
+    expectedTests.every((id) => tests.has(id))), "Both receipts must contain the complete declared suite.");
   requireCheck(red.exit === 1 && green.exit === 0 && red.source !== green.source,
     "Settled-work RED and GREEN require different independently observed source states.");
   requireCheck(red.tests.get(protectedTest)?.status === "passed" && green.tests.get(protectedTest)?.status === "passed",

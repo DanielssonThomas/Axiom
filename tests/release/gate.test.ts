@@ -27,6 +27,10 @@ test.each([
     row.hosts[0].cases[1].assertions[4].outcome = { status: "failed", reason: "Missing protected check" };
   }, /preserve-acceptance/i],
   ["missing required assertion", (row) => row.hosts[0].cases[1].assertions.pop(), /demonstrate-prevention/i],
+  ["partial native RED suite", (row) => {
+    row.hosts[1].cases[1].nativeCheckReceipts[0].tests =
+      row.hosts[1].cases[1].nativeCheckReceipts[0].tests.filter(({ id }: { id: string }) => id !== "formats a single catalog word");
+  }, /complete declared suite/i],
   ["unproved byte equivalence", (row) => delete row.codexEquivalence, /equivalence/i],
 ] satisfies [string, (row: ReturnType<typeof load>) => void, RegExp][])("rejects %s", (_description, change, message) => {
   const record = load("v1-hosts");
