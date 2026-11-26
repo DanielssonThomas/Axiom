@@ -1,6 +1,6 @@
 # Native host compatibility
 
-This matrix records the merged adapter baseline `96014e73ca14111be83c448898e41559f0f87f88` and the follow-up observations in [PR #38](https://github.com/DanielssonThomas/Axiom/pull/38). Qualification remains incomplete under [installed-host integration #19](https://github.com/DanielssonThomas/Axiom/issues/19). The adapter evidence used Node 24.22.3 and pnpm 11.25.0 on Linux x86-64 with disposable profiles and synthetic providers on localhost. Model identifiers below are the identifiers used in those synthetic requests.
+The [qualified default configurations](#qualified-default-configurations) below record the final observations for [installed-host integration #19](https://github.com/DanielssonThomas/Axiom/issues/19). The historical matrix records the adapter baseline `96014e73ca14111be83c448898e41559f0f87f88` and the follow-up observations in [PR #38](https://github.com/DanielssonThomas/Axiom/pull/38). The adapter evidence used Node 24.22.3 and pnpm 11.25.0 on Linux x86-64 with disposable profiles and synthetic providers on localhost. Model identifiers below are the identifiers used in those synthetic requests.
 
 Status values follow [AX-05 and the conformance rules](../core/AXIOMS.md#authority-and-conformance). A pass applies to the stated observation and tested revision. Required `failed`, `blocked`, `not_run`, missing, and stale evidence prevent release qualification.
 
@@ -337,18 +337,28 @@ The Codex distribution registers a native plugin hook. Approve the installed hoo
 
 On Hermes, the installed plugin applies the same declared Node suite rule and validates a marked structured handoff against the canonical task schema and active policy before dispatch. Supplemental fields travel with the parent goal while the worker context carries the canonical brief. The first-request receipt records the digest of the bytes accepted by the native worker.
 
-### Issue #19 criterion status
+## Qualified default configurations
 
-The pinned Linux distribution tests exercise rollback from a newer fixture artifact to the reviewed earlier artifact using the native Claude marketplace, Codex lifecycle, and Hermes Git install routes. They check restored artifact or runtime identity and preservation of unrelated settings. Release-specific rollback remains part of [#20](https://github.com/DanielssonThomas/Axiom/issues/20).
+Bundle source `ef35e6f5fb881db878a9547f124f8c28a08b414e` produced native component version `0.1.0`. Both qualified profiles use core policy version `1`, SHA-256 `2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78`, all six canonical skills and zero opt-in profiles. Both hosts ran on Ubuntu 26.04.1 x64 with GPT-6 Luna. Clean test profiles used the installed Axiom bundle and the ordinary reviewed task prompt.
 
-| Criterion | Current disposition | Smallest outstanding evidence or action |
+| Host and ordinary surface | Bundle SHA-256 | Observed loading |
 | --- | --- | --- |
-| Final bundles installed in clean ordinary sessions | Scoped scripted-provider evidence exists for all three hosts. Ordinary real-model runs completed on Codex and Hermes against the reviewed evaluation source. | Complete and bind the missing Codex and Hermes observations to the candidate. |
-| Exact host, model, OS, surface, bundle, policy and load mechanism | Recorded for the historical runs, loopback probes, and ordinary Codex and Hermes trials. | Verify the source, bundle and native loading for the qualified configurations and any claimed optional profile. |
-| Real behaviors, lifecycle and delegated work | Codex and Hermes results are recorded above. Required behavior and delegation evidence remain failed or incomplete. General policy refresh during some resume and compaction paths remains blocked. | Resolve the specific failures and evidence gaps against the adopted criteria. Verify affected lifecycle coverage on each claimed surface. |
-| Negative controls | Scripted native disabled/missing activation, check failures and lost-worker evidence are recorded for their stated surfaces. | Verify required controls on the final candidate and keep each limitation visible in the matrix. |
-| Compatibility matrix | The matrix records actual scoped outcomes. Release qualification remains blocked. | Add reviewed final evidence and explicit reasons for unsupported combinations. |
-| CLI wiring and integrated testing | Doctor, check, benchmark and the alias have executable coverage. Hosted deterministic Linux, macOS and Windows checks and the pinned Windows Codex transport passed at the ordinary-session source revision. | Retain exact-revision deterministic evidence for the eventual release candidate. |
+| Codex CLI 0.172.0-alpha.2 exec | `454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16` | Native plugin inventory, ordinary prompt input and read-only access to all six installed skill files. |
+| Hermes Agent 0.23.3 named-profile CLI | `59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d` | Installed named profile and session-bound native hook receipt. |
+
+| Required behavior | Codex archive SHA-256 | Hermes archive SHA-256 |
+| --- | --- | --- |
+| Clarification before editing | `4aa47bf50a49a21842bd6a90e81766bdfa95436811ac405a39ccbd2278c597bb` | `0ada7c648438355fb5cf526d9c31c39098aff35096b6bc4798c495561dd844dd` |
+| Settled-work repair and prevention | `f4a45a9aa6092e7c29297e567cc13fb2fc3db2c16366ef069279cb7979938c34` | `99079e0bf54fa56c7b0b79a7933b2e8a5d41d52c175f1ad8abb926c0c67e9f23` |
+| Reuse and scoped change | `2220cce9fc994e5c05ae0ca1c303cc2e53fdd8e624886a8aa189880ffd0bd287` | `298692b1a864dca25fa6ff73e5c475e651750e6b4ccd473ad5101cf28e41d870` |
+| Truthful reporting of unavailable preview | `107fba6851c19717873e2cfa5903bc99aba18fde49b9bbff0b32094f0bde891e` | `2d5534941c7b3ff73904f03dce6933cc88309a6f1b1f7c071d87b4ab1f363788` |
+| Delegate and verify the returned change | `e61150ee9e08ae5d252a5ec6483ef6586e388f0b72891770d52ebcd2772bcd5d` | `3db2f9fb0d826fa1f4222632b9f092853739c9225c91c59d9f98f61a69021f0d` |
+
+All mandatory assertions in the ten archives passed. Both protected acceptance tests passed before and after the repair, and only the prospective regression failed in RED. Both workers received the full policy and task requirements. The linked Codex worker read the exact digest-bound file before editing. The Hermes worker's first native request carried the structured brief. Each parent inspected the scoped delivered change and ran its passing acceptance test. Codex evidence was captured at `d3b94ab3d44e91401063c9c2ddad96aaad0f5558`. Comparing every file produced the identical Codex directory and policy at `ef35e6f`. The Hermes reruns used `ef35e6f`.
+
+The same product revision passed frozen install, typecheck, build and 295 Linux tests, with 11 skips for unavailable or platform-specific paths. The pinned native checks cover policy and skill loading, versioned update and rollback, disable and uninstall, settings preservation, broken activation, incomplete worker delivery, and the separately declared clarification transports. The final Hermes guard added a failing pre-change regression for omitting the protected acceptance test. Doctor, check, benchmark and the benchmark alias passed CLI integration tests. [Foundation CI](https://github.com/DanielssonThomas/Axiom/actions/runs/45886283380) · [Windows Codex transport](https://github.com/DanielssonThomas/Axiom/actions/runs/45886283535)
+
+Claude Code external-model behavior and real-model application of the opt-in `ui-atomic` profile remain `not_run`. Profile application is `not_applicable` to the qualified default configurations because neither selects a profile. The paired standard benchmark remains `blocked` for these native settled-work and delegation fixtures. General resume, compaction, other models and other operating systems remain outside this qualification. The historical failures above apply to their recorded revisions. Final artifact and update/rollback validation is tracked in [Axiom #20](https://github.com/DanielssonThomas/Axiom/issues/20).
 
 ### Proposed profile scope amendment
 
