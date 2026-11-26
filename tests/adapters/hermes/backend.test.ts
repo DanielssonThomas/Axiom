@@ -4,13 +4,21 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { backendResultSchema } from "@axiom/contracts";
 import { HermesBenchmarkBackend } from "../../../adapters/hermes/src/index.js";
+import { visibleHermesQuestionMark } from "../../../adapters/hermes/src/clarification.js";
+
+test("reports question punctuation from visible Hermes messages only", () => {
+  expect(visibleHermesQuestionMark("Done.", [{ event: "message.interim", text: "Which format?" }])).toBe(true);
+  expect(visibleHermesQuestionMark("Done.", [{ event: "message.delta", delta: "？" }])).toBe(true);
+  expect(visibleHermesQuestionMark("Done.", [{ event: "reasoning.available", text: "Which format?" }])).toBe(false);
+  expect(visibleHermesQuestionMark("Which format?", [])).toBe(true);
+});
 
 const workspaces: string[] = [];
 afterEach(() => {
   for (const path of workspaces.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(tool = "read_file", stream?: { events: unknown[]; processCode: number }) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "axiom-hermes-backend-")));
   workspaces.push(directory);
   const home = join(directory, "hermes-home");
@@ -46,12 +54,13 @@ if (prompt !== 'A literal $(not shell) task.' || !argv.includes("--format") || !
   || !argv.includes("--max-turns") || !argv.includes("2") || argv.includes("--run-budget")
   || !argv.includes("--query-file") || !argv.includes("--profile") || !argv.includes("eval")
   || process.env.HERMES_HOME !== ${JSON.stringify(home)}) process.exit(8);
-for (const event of [
-  {type:"system",subtype:"init",model:"fixture-model"},
-  {type:"tool_use",name:"read_file",tool_call_id:"call-1",input:{secret:"not archived"}},
-  {type:"tool_result",name:"read_file",tool_call_id:"call-1",is_error:false,duration_ms:3},
-  {type:"result",session_id:"session-one",exit_code:0,tokens:{input:4,output:1,total:5}}
-]) console.log(JSON.stringify(event));
+for (const event of ${JSON.stringify(stream?.events ?? [
+    { type: "system", subtype: "init", model: "fixture-model" },
+    { type: "tool_use", name: tool, tool_call_id: "call-1", input: { secret: "not archived" } },
+    { type: "tool_result", name: tool, tool_call_id: "call-1", is_error: false, duration_ms: 3 },
+    { type: "result", session_id: "session-one", exit_code: 0, tokens: { input: 4, output: 1, total: 5 } },
+  ])}) console.log(JSON.stringify(event));
+process.exitCode = ${stream?.processCode ?? 0};
 `);
   const archive = join(directory, "archive");
   const options = {
@@ -88,6 +97,47 @@ test("runs documented Hermes flags with literal stdin and archives normalized na
   expect(raw).not.toContain("A literal");
 });
 
+const genericStreamFailure = "The Hermes stream lacked a matching native model and terminal result.";
+const initFailure = "credentials or agent init failed";
+const privateError = "private-native-startup-detail";
+const init = { type: "system", subtype: "init", model: "fixture-model" };
+const presession = { type: "result", session_id: "", exit_code: 1, error: initFailure };
+test.each([
+  { name: "credential or agent initialization", events: [init, presession], processCode: 1,
+    reason: "Hermes reported a credential or agent initialization failure before establishing a session." },
+  { name: "gateway access refusal", events: [init, { ...presession,
+    error: `Gateway inaccessible: unsafe_control_permissions (${privateError})` }], processCode: 1,
+    reason: "Hermes refused access to the local gateway control channel before establishing a session." },
+  { name: "gateway connection failure", events: [init, { ...presession,
+    error: "Gateway connection failed; no local fallback" }], processCode: 1,
+    reason: "Hermes could not reach or communicate with the local gateway before establishing a session." },
+  { name: "gateway workspace failure", events: [init, { ...presession, error: "workspace_unavailable" }], processCode: 1,
+    reason: "The Hermes gateway could not access the disposable workspace before establishing a session." },
+  { name: "gateway storage failure", events: [init, { ...presession, error: "storage_unavailable" }], processCode: 1,
+    reason: "The Hermes gateway could not access session storage before establishing a session." },
+  { name: "gateway startup rejection", events: [init, { ...presession, error: "invalid_params" }], processCode: 1,
+    reason: "The Hermes gateway rejected the native session startup request." },
+  { name: "gateway launch credentials failure", events: [init, { ...presession, error: "launch_credentials_unavailable" }], processCode: 1,
+    reason: "The Hermes gateway could not access launch credentials before establishing a session." },
+  { name: "unknown gateway detail", events: [init, { ...presession,
+    error: `Gateway inaccessible: unknown_reason (unsafe_control_permissions: ${privateError})` }], processCode: 1,
+    reason: "The native Hermes run failed before establishing a session." },
+  { name: "another pre-session failure", events: [init, { ...presession, error: privateError }], processCode: 1,
+    reason: "The native Hermes run failed before establishing a session." },
+  { name: "zero exit without a session", events: [init, { ...presession, exit_code: 0 }], processCode: 0,
+    reason: genericStreamFailure },
+  { name: "inconsistent process exit", events: [init, presession], processCode: 2, reason: genericStreamFailure },
+  { name: "another model", events: [{ ...init, model: "other-model" }, presession], processCode: 1, reason: genericStreamFailure },
+  { name: "a result followed by an event", events: [init, presession, init], processCode: 1, reason: genericStreamFailure },
+])("blocks $name without archiving the raw Hermes stream", async ({ events, processCode, reason }) => {
+  const { backend, request } = fixture("read_file", { events, processCode });
+  const actual = await backend.run(request, new AbortController().signal);
+  expect(actual.outcome).toEqual({ status: "blocked", reason });
+  expect(actual.artifacts).toEqual([]);
+  expect(actual.host).toBeUndefined();
+  expect(JSON.stringify(actual)).not.toContain(privateError);
+});
+
 test("blocks archive and profile overlaps before launching Hermes", async () => {
   const { archive, directory, home, options, request } = fixture();
   const redirected = join(directory, "redirected");
@@ -110,6 +160,16 @@ test("blocks archive and profile overlaps before launching Hermes", async () => 
     .toMatchObject({ status: "blocked", reason: expect.stringContaining("redirected") });
   expect(existsSync(join(request.workspace, "subdirectory"))).toBe(false);
   expect(existsSync(join(home, "version-probed"))).toBe(false);
+});
+
+test("marks aggregate token usage unknown when native delegation omits the worker's tokens", async () => {
+  const { backend, request } = fixture("delegate_task");
+  const actual = backendResultSchema.parse(await backend.run(request, new AbortController().signal));
+  expect(actual).toMatchObject({
+    outcome: { status: "passed" }, usage: { metering: "unknown", reason: expect.stringContaining("worker") },
+  });
+  expect(actual.usage).not.toHaveProperty("inputTokens");
+  expect(actual.usage).not.toHaveProperty("outputTokens");
 });
 
 test("cancels a running host and reports unavailable activation and bounded timeout", async () => {

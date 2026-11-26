@@ -1,13 +1,15 @@
+import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { backendResultSchema, type BackendRequest } from "@axiom/contracts";
+import { backendResultSchema, taskBriefSchema, type BackendRequest, type TaskBrief } from "@axiom/contracts";
 import {
   assessCodexActivation, buildCodexBundle, codexCapabilities, createCodexBackend,
   parseCodexTrace, transformProfileInstructions,
 } from "../../../adapters/codex/src/index.js";
 import { runCodex } from "../../../adapters/codex/src/process.js";
+import { resolveCodexAccountProgram } from "../../../adapters/codex/src/backend.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
 
 let root: string;
@@ -32,6 +34,26 @@ function bundle() {
   });
 }
 
+test.runIf(process.platform === "linux" && ["x64", "arm64"].includes(process.arch))(
+  "resolves the official npm launcher to the executable inside its installed platform package", async () => {
+    const packages = join(root, "node_modules", "@openai");
+    const shim = join(packages, "codex", "bin", "codex.js");
+    const architecture = process.arch === "x64" ? "x86_64" : "aarch64";
+    const platformPackage = join(packages, `codex-linux-${process.arch}`);
+    const native = join(platformPackage, "vendor", `${architecture}-unknown-linux-musl`, "bin", "codex");
+    await mkdir(join(packages, "codex", "bin"), { recursive: true });
+    await mkdir(join(native, ".."), { recursive: true });
+    await writeFile(join(packages, "codex", "package.json"), '{"name":"@openai/codex"}');
+    await writeFile(join(platformPackage, "package.json"), "{}");
+    await writeFile(shim, "#!/usr/bin/env node\n", { mode: 0o700 });
+    await writeFile(native, "#!/bin/sh\n", { mode: 0o700 });
+    await expect(resolveCodexAccountProgram(shim)).resolves.toBe(native);
+    await expect(resolveCodexAccountProgram(native)).resolves.toBe(native);
+    await rm(native);
+    await expect(resolveCodexAccountProgram(shim)).rejects.toThrow(/platform executable/);
+  },
+);
+
 test("packages canonical skills and resolves policy through the shared contract", async () => {
   const built = await bundle();
   const plugin = join(built.root, "plugins/axiom");
@@ -47,6 +69,57 @@ test("packages canonical skills and resolves policy through the shared contract"
   expect(JSON.parse(await readFile(join(plugin, "axiom-policy.json"), "utf8")).policy)
     .toEqual(built.policy);
   expect(built.instructions).toContain(built.policy.digest);
+});
+
+test("routes the full project RED and digest-bound worker reference through the installed Codex workflow", async () => {
+  for (const name of ["delegate", "verify"]) {
+    const directory = join(root, "source", "skills", name);
+    await mkdir(directory);
+    await writeFile(join(directory, "SKILL.md"), "# " + name + "\n");
+  }
+  const built = await bundle();
+  const plugin = join(built.root, "plugins", "axiom");
+  const workspace = join(root, "workspace");
+  await mkdir(join(workspace, ".axiom"), { recursive: true });
+  await writeFile(join(workspace, "AGENTS.md"), "The relevant verification command is `node --test`.\n");
+  expect(built.instructions).toContain("Run the complete repository verification command as its own shell call");
+  expect(built.instructions).toContain("When the project requires a regression test");
+  expect(built.instructions).toContain("Keep verification edits within the task scope");
+  expect(built.instructions).toContain("at .axiom/<task_name>.json");
+  const workflow = join(plugin, "hooks", "workflow.mjs");
+  const call = (tool: string, input: object) => {
+    const execution = spawnSync(process.execPath, [workflow], {
+      input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: workspace, tool_name: tool, tool_input: input }),
+      encoding: "utf8", env: { ...process.env, PLUGIN_ROOT: plugin },
+    });
+    expect(execution.status, execution.stderr).toBe(0);
+    return JSON.parse(execution.stdout);
+  };
+  const decision = (tool: string, input: object) => call(tool, input).hookSpecificOutput;
+  const bash = (command: string) => decision("Bash", { command, workdir: workspace });
+  expect(bash("node --test test/single.test.mjs")).toMatchObject({ permissionDecision: "deny",
+    permissionDecisionReason: expect.stringContaining("node --test") });
+  expect(bash("node --test")).toBeUndefined();
+  expect(bash("git status --short")).toBeUndefined();
+
+  const reference = ".axiom/example_worker.json";
+  const brief = { id: "example_worker", parentId: "example-parent", objective: "Change a value.",
+    policy: built.policy, ownedPaths: ["value.mjs"], criteria: [{ id: "value", description: "Return the approved value.", required: true }],
+    requiredCapabilities: ["process-execution"], limits: { maxAttempts: 1, maxConcurrency: 1, timeoutMs: 30_000 } };
+  const spawn = (taskName: string) => call("collaborationspawn_agent", { task_name: taskName, message: "opaque-worker-message" });
+  expect(spawn("example_worker").hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  await writeFile(join(workspace, reference), JSON.stringify({ ...brief, instructions: ["Extra context."] }));
+  expect(bash("sha256sum -- " + reference)).toMatchObject({
+    permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("exactly these Axiom task brief fields"),
+  });
+  await writeFile(join(workspace, reference), JSON.stringify({ ...brief, requiredCapabilities: ["process execution"] }));
+  expect(bash("sha256sum -- " + reference)).toMatchObject({
+    permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("process-execution"),
+  });
+  await writeFile(join(workspace, reference), JSON.stringify(brief));
+  expect(bash("sha256sum -- " + reference)).toBeUndefined();
+  expect(spawn("another_worker").hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });
+  expect(spawn("example_worker")).toEqual({});
 });
 
 test("updates and removes only the owned profile instruction fragment idempotently", async () => {
@@ -87,6 +160,46 @@ test("blocks absent, disabled, unobserved, conflicting, failing, and delegated a
   expect(codexCapabilities(host)).toContainEqual({ id: "delegation", available: false, reason: expect.any(String) });
 });
 
+test("requires the exact staged brief and native policy in the spawned worker's first request", async () => {
+  const built = await bundle();
+  const brief: TaskBrief = {
+    id: "worker-task", parentId: "parent-task", objective: "Read the fixture within scope.",
+    policy: built.policy, ownedPaths: ["fixture.txt"], criteria: [{ id: "scope", description: "Stay within scope.", required: true }],
+    requiredCapabilities: [], limits: { timeoutMs: 1000, maxAttempts: 1, maxConcurrency: 1 },
+  };
+  const message = (text: string) => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
+  const policy = message(transformProfileInstructions("# AGENTS.md instructions for /fixture\n\n", built.instructions));
+  const worker = message(`${brief.objective}\n\nAxiom scoped worker brief:\n${JSON.stringify(taskBriefSchema.parse(brief))}`);
+  const trace = [
+    { type: "thread.started", thread_id: "native-parent" },
+    { type: "item.completed", item: { type: "collab_tool_call", tool: "spawn_agent", status: "completed",
+      sender_thread_id: "native-parent", receiver_thread_ids: ["native-worker"] } },
+    { type: "turn.completed" },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  const request = { turnMetadata: JSON.stringify({
+    session_id: "native-parent", parent_thread_id: "native-parent", thread_id: "native-worker",
+    thread_source: "subagent", subagent_kind: "thread_spawn", history_initialization: "new", request_kind: "turn",
+    model: host.model,
+  }), body: { model: host.model, input: [policy, worker] } };
+  const input = { bundle: built, host, catalog, observations: [success], discovered: true, selected: true,
+    contexts: [built.instructions], skills: ["axiom:fixture"], observedVersion: version,
+    requiredCapabilities: ["delegation"], delegation: { brief, trace, requests: [request] } };
+  expect(assessCodexActivation(input)).toMatchObject({
+    outcome: { status: "passed" },
+    delegation: { parentThreadId: "native-parent", workerThreadId: "native-worker", outcome: { status: "passed" } },
+  });
+  const wrongThread = { ...request, turnMetadata: request.turnMetadata.replace("native-worker", "another-worker") };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [wrongThread] } }).outcome.status).toBe("blocked");
+  const omittedBrief = { ...request, body: { ...request.body, input: [policy, message(brief.objective)] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [omittedBrief, request] } }).outcome.status).toBe("failed");
+  const omittedPolicy = { ...request, body: { ...request.body, input: [worker] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [omittedPolicy] } }).outcome.status).toBe("failed");
+  const spoofedPolicy = { ...request, body: { ...request.body, input: [{
+    ...worker, content: [...policy.content, ...worker.content],
+  }] } };
+  expect(assessCodexActivation({ ...input, delegation: { brief, trace, requests: [spoofedPolicy] } }).outcome.status).toBe("failed");
+});
+
 test("normalizes completed native events, rejects absent success and drops model reasoning", () => {
   const trace = [
     { type: "thread.started" },
@@ -101,6 +214,43 @@ test("normalizes completed native events, rejects absent success and drops model
   });
   expect(JSON.stringify(parseCodexTrace(trace))).not.toContain("sensitive");
   expect(parseCodexTrace('{"type":"thread.started"}').outcome.status).not.toBe("passed");
+});
+
+test("classifies terminal native Codex provider errors without copying diagnostic text", () => {
+  const canary = "raw-provider-diagnostic-canary";
+  const modelRejected = "The native Codex provider rejected the requested model.";
+  const generic = "The native Codex turn failed before completing execution.";
+  const fixtures = [
+    [JSON.stringify({ error: { code: "unsupported_model", message: canary } }), modelRejected],
+    [JSON.stringify({ error: { code: null, message: "The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account." } }), modelRejected],
+    ["The model `gpt-5.4` does not exist or you do not have access to it.", modelRejected],
+    [`unexpected status 401 Unauthorized: ${canary}`, "The native Codex provider refused access to the request."],
+    [`unexpected status 403 Forbidden: ${canary}`, "The native Codex provider refused access to the request."],
+    [`exceeded retry limit, last status: 429 Too Many Requests, ${canary}`, "The native Codex provider rate-limited the request."],
+    [`unclassified 404: ${canary} unsupported_model`, generic],
+    [JSON.stringify({ error: { message: `unsupported_model ${canary}` } }), generic],
+    [JSON.stringify({ error: { code: "unsupported_model", message: canary.repeat(200) } }), generic],
+  ] as const;
+  for (const [message, reason] of fixtures) {
+    const trace = parseCodexTrace(JSON.stringify({ type: "turn.failed", error: { message } }));
+    expect(trace.outcome).toEqual({ status: "blocked", reason });
+    expect(JSON.stringify(trace)).not.toContain(canary);
+  }
+  const nonterminal = parseCodexTrace(JSON.stringify({ type: "error", message: `unexpected status 401 Unauthorized: ${canary}` }));
+  expect(nonterminal.outcome).toEqual({ status: "blocked", reason: "No complete Codex turn was observed." });
+});
+
+test("does not present parent CLI counters as aggregate token usage for a delegated attempt", () => {
+  const trace = [
+    { type: "thread.started", thread_id: "parent" },
+    { type: "item.completed", item: { type: "collab_tool_call", tool: "spawn_agent", status: "completed",
+      sender_thread_id: "parent", receiver_thread_ids: ["worker"] } },
+    { type: "turn.completed", usage: { input_tokens: 20, output_tokens: 6 } },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  expect(parseCodexTrace(trace)).toMatchObject({
+    outcome: { status: "passed" },
+    usage: { metering: "unknown", reason: expect.stringMatching(/worker/i) },
+  });
 });
 
 test("transports literal argv, stdin, and isolated profile roots through a child process", async () => {
@@ -158,4 +308,64 @@ test("executes documented Codex argv on supported Linux and explicitly blocks ot
   expect(stopped.outcome).toMatchObject({ status: "blocked", reason: expect.stringMatching(/time limit/i) });
   const cancelled = await backend.run({ ...request, id: "try-three" }, AbortSignal.abort());
   expect(cancelled.outcome).toMatchObject({ status: "not_run" });
+});
+
+test.runIf(process.platform === "linux")("checks native ChatGPT auth and never archives unvetted command text", async () => {
+  const program = join(root, "codex-native-auth");
+  const authHome = join(root, "auth-profile");
+  const workspace = join(root, "workspace");
+  const artifacts = join(root, "artifacts");
+  const canary = "sensitive-fixture-canary";
+  await Promise.all([mkdir(authHome), mkdir(workspace)]);
+  await writeFile(join(authHome, "auth.json"), canary, { mode: 0o600 });
+  await writeFile(join(authHome, "AGENTS.md"), "An unrelated profile instruction.");
+  await writeFile(program, [
+    "#!/usr/bin/env node",
+    'const a = process.argv.slice(2), assert = require("node:assert/strict"), fs = require("node:fs");',
+    'const p = require("node:path");',
+    'if (a[0] === "--version") { console.log("codex-cli 0.172.0-alpha.2"); process.exit(); }',
+    'if (a[0] === "login") {',
+    ' assert.equal(a[1], "status");',
+    ' assert.equal(fs.readlinkSync(p.join(process.env.CODEX_HOME, "auth.json")), ' + JSON.stringify(join(authHome, "auth.json")) + ');',
+    ' assert(!fs.existsSync(p.join(process.env.CODEX_HOME, "AGENTS.md")));',
+    ' assert.match(fs.readFileSync(p.join(process.env.CODEX_HOME, "config.toml"), "utf8"), /default_permissions = "axiom-benchmark"/);',
+    ' console.error(fs.existsSync("allow-native-login") ? "Logged in using ChatGPT" : "API key configured");',
+    ' process.exit();',
+    '}',
+    'if (a[0] === "sandbox") { assert.equal(a[2], "axiom-benchmark"); process.exit(); }',
+    'assert(a.includes("exec") && a.includes("--ephemeral") && !a.includes("--sandbox"));',
+    `if (fs.existsSync("exit-before-events")) { console.error(${JSON.stringify(canary)}); process.exit(1); }`,
+    'if (fs.existsSync("reject-model")) {',
+    ` const raw = ${JSON.stringify(canary)};`,
+    ' console.error(raw);',
+    ' console.log(JSON.stringify({ type: "turn.failed", error: { message: JSON.stringify({ error: { code: "unsupported_model", message: raw } }) } }));',
+    ' process.exit(1);',
+    '}',
+    'fs.writeFileSync("executed", "yes");',
+    'console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: ' + JSON.stringify(canary) + ' } }));',
+    'console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 2 } }));',
+  ].join("\n"), { mode: 0o700 });
+  const request: BackendRequest = {
+    id: "native-auth", caseId: "fixture", prompt: "fixture prompt", workspace, host,
+    policy: { version: "1", digest: `sha256:${"0".repeat(64)}`, profiles: [] }, mode: "without_axiom", timeoutMs: 5000,
+  };
+  const backend = createCodexBackend({ program, artifacts, authHome });
+  const run = () => backend.run(request, new AbortController().signal);
+  expect(await run()).toMatchObject({ outcome: { status: "blocked", reason: expect.stringMatching(/ChatGPT/) }, artifacts: [] });
+  await expect(readFile(join(workspace, "executed"))).rejects.toHaveProperty("code", "ENOENT");
+  await writeFile(join(workspace, "allow-native-login"), "");
+  const result = await run();
+  expect(result).toMatchObject({ outcome: { status: "passed" }, artifacts: [] });
+  expect(JSON.stringify(result)).not.toContain(canary);
+  await writeFile(join(workspace, "reject-model"), "");
+  const rejected = await run();
+  expect(rejected).toMatchObject({ outcome: { status: "blocked", reason: "The native Codex provider rejected the requested model." },
+    artifacts: [], usage: { metering: "unknown" } });
+  expect(JSON.stringify(rejected)).not.toContain(canary);
+  await writeFile(join(workspace, "exit-before-events"), "");
+  const earlyExit = await run();
+  expect(earlyExit).toMatchObject({ outcome: { status: "blocked", reason: "The native Codex CLI exited before completing the attempt." },
+    artifacts: [] });
+  expect(JSON.stringify(earlyExit)).not.toContain(canary);
+  await expect(readFile(join(authHome, "auth.json"), "utf8")).resolves.toBe(canary);
 });

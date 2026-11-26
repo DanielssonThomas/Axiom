@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
+import { createInterface } from "node:readline";
+import { object } from "./runtime.js";
 
 export interface ClaudeProfile {
   program: string;
@@ -8,10 +10,24 @@ export interface ClaudeProfile {
   workspace: string;
   /** Explicit native provider and session settings. Ambient credentials are excluded. */
   environment?: Readonly<Record<string, string>>;
+  launch?: ClaudeLauncher;
+}
+
+export type ClaudeLauncher = (
+  profile: ClaudeProfile,
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv,
+) => { program: string; args: readonly string[]; env: NodeJS.ProcessEnv };
+
+export const subscriptionArguments = ["--restricted", "--settings", '{"forceLoginMethod":"claudeai"}'] as const;
+
+interface ClaudeStdioConversation {
+  prompt: string;
+  respond(event: Record<string, unknown>): object | undefined;
 }
 
 export function invokeClaude(
-  profile: ClaudeProfile, args: readonly string[], signal = AbortSignal.timeout(30_000), input?: string,
+  profile: ClaudeProfile, args: readonly string[], signal = AbortSignal.timeout(30_000), input?: string | ClaudeStdioConversation,
 ): Promise<{ code: number; stdout: string }> {
   if (![profile.program, profile.home, profile.userHome, profile.workspace].every(isAbsolute)) {
     throw new Error("Use absolute paths for the executable, profile roots, and workspace.");
@@ -19,12 +35,13 @@ export function invokeClaude(
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const ownsProcessGroup = process.platform !== "win32";
-    const child = spawn(profile.program, args, {
-      cwd: profile.workspace, shell: false, detached: ownsProcessGroup, windowsHide: true,
-      env: {
-        PATH: process.env.PATH, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1",
-        DISABLE_TELEMETRY: "1", ...profile.environment, HOME: profile.userHome, CLAUDE_CONFIG_DIR: profile.home,
-      },
+    const env = {
+      PATH: process.env.PATH, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1",
+      DISABLE_TELEMETRY: "1", ...profile.environment, HOME: profile.userHome, CLAUDE_CONFIG_DIR: profile.home,
+    };
+    const launch = profile.launch?.(profile, args, env) ?? { program: profile.program, args, env };
+    const child = spawn(launch.program, launch.args, {
+      cwd: profile.workspace, shell: false, detached: ownsProcessGroup, windowsHide: true, env: launch.env,
     });
     let failure: Error | undefined;
     function terminate() {
@@ -60,9 +77,40 @@ export function invokeClaude(
       else resolve({ code, stdout: Buffer.concat(stdout).toString("utf8") });
     });
     signal.addEventListener("abort", terminate, { once: true });
+    if (signal.aborted) terminate();
     child.stdin?.on("error", () => { /* A native administrative command may exit without reading stdin. */ });
-    child.stdin?.end(input);
+    if (typeof input !== "object") {
+      child.stdin.end(input);
+    } else {
+      const send = (message: object) => child.stdin.write(JSON.stringify(message) + "\n");
+      const events = createInterface({ input: child.stdout });
+      events.on("line", (line) => {
+        if (!line.trim()) return;
+        try {
+          const event = object(JSON.parse(line));
+          const response = input.respond(event);
+          if (response) send(response);
+          if (event.type === "result") child.stdin.end();
+        } catch {
+          failure ??= new Error("Claude Code emitted an invalid stdio conversation event.");
+          terminate();
+        }
+      });
+      send({ type: "user", message: { role: "user", content: input.prompt }, parent_tool_use_id: null, session_id: "" });
+    }
   });
+}
+
+export async function hasClaudeSubscription(profile: ClaudeProfile, signal: AbortSignal): Promise<boolean> {
+  const { code, stdout } = await invokeClaude(profile, [...subscriptionArguments, "auth", "status", "--json"], signal);
+  if (code !== 0) return false;
+  try {
+    const status = JSON.parse(stdout);
+    return status?.loggedIn === true && status.authMethod === "claude.ai"
+      && status.apiProvider === "firstParty" && status.configDirectory === profile.home;
+  } catch {
+    return false;
+  }
 }
 
 export async function claudeVersion(profile: ClaudeProfile, signal?: AbortSignal): Promise<string | undefined> {

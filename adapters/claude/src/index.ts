@@ -3,4 +3,4 @@ export { configureClaudeProfile, observeClaudeInstallation, validateClaudeBundle
 export { runClaudeHook, workerBriefEnvironment, type ClaudeHookResult } from "./runtime.js";
 export { assessClaudeActivation, claudeCapabilities, parseClaudeTrace, type ClaudeSessionObservation } from "./trace.js";
 export { createClaudeBackend, executeClaudeSession, type ClaudeBackendOptions, type ClaudeSessionOptions } from "./backend.js";
-export type { ClaudeProfile } from "./process.js";
+export type { ClaudeLauncher, ClaudeProfile } from "./process.js";

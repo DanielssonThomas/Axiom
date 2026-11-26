@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
@@ -76,6 +76,16 @@ function options(overrides: Partial<BenchmarkOptions> = {}): BenchmarkOptions {
     ...overrides,
   };
 }
+
+test("records bounded native diagnostics separately from isolated runtimes and never starts excess attempts", async () => {
+  const report = await runBenchmark(options({
+    repetitions: 2, limits: { timeoutMs: 4000, maxConcurrency: 1, maxAttempts: 2 },
+    openRuntime: async (workspace) => ({ ...await fake(workspace), kind: "native" }),
+  }));
+  expect(report.attempts.map(({ runtime, outcome }) => [runtime, outcome.status])).toEqual([
+    ["native", "passed"], ["native", "passed"], [undefined, "not_run"], [undefined, "not_run"],
+  ]);
+});
 
 test("stages only selected shared and skill-local fixtures and records comparable paired attempts", async () => {
   const requests: BackendRequest[] = [];
@@ -171,6 +181,50 @@ test("blocks absent isolation and rejects a private fixture or a symlink before 
   expect(absent.attempts[0]?.outcome.reason).toMatch(/isolation/i);
 });
 
+test.each([
+  ["Git metadata", "The delivered fixture contains Git metadata."],
+  ["symbolic link", "The delivered fixture contains a symbolic link or multiply linked file."],
+  ["shared link", "The delivered fixture contains a symbolic link or multiply linked file."],
+  ["missing workspace", "The delivered fixture was missing or changed during capture."],
+  ["verifier staging", "The captured fixture could not be prepared for independent source verification."],
+] as const)("classifies %s safely after native execution completed", async (scenario, reason) => {
+  const canary = "private-capture-path-and-content-canary";
+  const graded: string[] = [];
+  const report = await runBenchmark(options({
+    limits: { timeoutMs: 8000, maxConcurrency: 1, maxAttempts: 2 },
+    openRuntime: async (workspace) => ({
+      ...await fake(workspace), kind: "native",
+      backend: { async run(request) {
+        if (request.mode === "without_axiom") {
+          const file = join(workspace, canary);
+          if (scenario === "Git metadata") await mkdir(join(file, ".git"), { recursive: true });
+          if (scenario === "symbolic link") await symlink(join(root, "evals", "graders", "hidden.txt"), file, "file");
+          if (scenario === "shared link") await link(join(workspace, "visible.txt"), file);
+          if (scenario === "missing workspace") await rm(workspace, { recursive: true, force: true });
+          if (scenario === "verifier staging") await writeFile(join(workspace, "..", "verified-source"), canary);
+        }
+        return execution(request);
+      } },
+    }),
+    grader: { ...graderIdentity, grade: (evaluation, observation) => {
+      graded.push(observation.execution.requestId);
+      return { source: observation.source,
+        assertions: evaluation.assertions.map(({ id }) => ({ criterionId: id, outcome: { status: "passed" } })) };
+    } },
+  }));
+  const [passed, blocked] = report.attempts;
+  expect(passed?.outcome.status).toBe("passed");
+  expect(blocked).toMatchObject({ mode: "without_axiom", execution: { outcome: { status: "passed" } },
+    outcome: { status: "blocked", reason },
+    assertions: [{ outcome: { status: "not_run" } }, { outcome: { status: "not_run" } }],
+  });
+  expect(blocked?.source).toBeUndefined();
+  expect(blocked?.assertions.some(({ evidenceId }) => evidenceId !== undefined)).toBe(false);
+  expect(report.outcome.status).toBe("blocked");
+  expect(graded).toEqual([passed?.id]);
+  expect(JSON.stringify(report)).not.toContain(canary);
+});
+
 test("keeps attempted behavior failures and blocked capabilities visible", async () => {
   const unavailable = { ...shared, requiredCapabilities: ["terminal"] };
   const report = await runBenchmark(options({
@@ -247,7 +301,7 @@ test("shared evidence verification catches an archived trace changed during grad
   expect(result.attempts[0]?.assertions[0]?.outcome.reason).toMatch(/artifact identity changed/i);
 });
 
-test("preserves earlier failures and enforces attempt and concurrency budgets", async () => {
+test("preserves earlier failures and enforces attempt and concurrency limits", async () => {
   let current = 0;
   let peak = 0;
   let invocations = 0;

@@ -1,29 +1,42 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { backendRequestSchema, backendResultSchema, type BenchmarkBackend, type EvidenceOutcome, type Usage } from "@axiom/contracts";
-import { claudeVersion, invokeClaude, type ClaudeProfile } from "./process.js";
+import { claudeVersion, hasClaudeSubscription, invokeClaude, subscriptionArguments, type ClaudeLauncher, type ClaudeProfile } from "./process.js";
+import { configureClaudeProfile } from "./profile.js";
 import { sha256, workerBriefKey } from "./runtime.js";
 import { assessClaudeActivation, parseClaudeTrace, supportedClaudeHost } from "./trace.js";
 import type { ClaudeBundle } from "./bundle.js";
+import { clarificationExchange, type ClarificationTopic } from "./clarification.js";
 
 export interface ClaudeBackendOptions {
   program: string;
   /** Trusted archive outside the disposable workspace. Artifact locations are archive-relative. */
   artifacts: string;
-  maxBudgetUsd: number;
+  /** Use native subscription authentication from an existing CLAUDE_CONFIG_DIR. */
+  authHome?: string;
+  /** HOME for native subscription resources. Defaults to the operator's home. */
+  userHome?: string;
   bundle?: ClaudeBundle;
   environment?: Readonly<Record<string, string>>;
+  launch?: ClaudeLauncher;
+  installNative?: boolean;
+  tools?: readonly string[];
+  clarification?: (caseId: string) => ClarificationTopic | undefined;
 }
 
 export interface ClaudeSessionOptions {
   model: string;
-  maxBudgetUsd: number;
+  subscription?: boolean;
   prompt: string;
   signal?: AbortSignal;
   bundle?: ClaudeBundle;
+  tools?: readonly string[];
+  clarification?: ClarificationTopic;
+  /** The isolated launcher uses configuration staged in its disposable profile. */
+  useDisposableSettings?: boolean;
 }
 
 function behind(root: string, path: string): boolean {
@@ -31,22 +44,36 @@ function behind(root: string, path: string): boolean {
   return !isAbsolute(offset) && offset !== ".." && !offset.startsWith(`..${sep}`);
 }
 
+const subscriptionTools = ["Read", "Glob", "Grep", "Edit", "Write", "Skill"];
+
 /** Run one native print session and normalize CLI observations without storing transcript text. */
 export async function executeClaudeSession(profile: ClaudeProfile, options: ClaudeSessionOptions) {
-  if (!Number.isFinite(options.maxBudgetUsd) || options.maxBudgetUsd <= 0) throw new Error("A positive Claude API budget is required.");
+  const exchange = options.clarification && clarificationExchange(options.clarification);
+  const tools = options.subscription ? subscriptionTools : options.tools ?? (exchange ? subscriptionTools : undefined);
+  const enabledTools = tools && (exchange ? [...new Set([...tools, "AskUserQuestion"])] : tools);
+  const allowedTools = tools?.filter((tool) => !exchange || tool !== "AskUserQuestion");
   const { code, stdout } = await invokeClaude(profile, [
+    ...(options.subscription ? subscriptionArguments : exchange && !(options.useDisposableSettings && profile.launch) ? ["--restricted"] : []),
     "-p", "--output-format", "stream-json", "--verbose", "--include-hook-events",
-    "--permission-mode", "dontAsk", "--no-session-persistence", "--max-budget-usd", String(options.maxBudgetUsd),
+    ...(exchange ? ["--input-format", "stream-json", "--permission-prompt-tool", "stdio"] : []),
+    "--permission-mode", exchange ? "default" : "dontAsk", "--no-session-persistence",
     "--model", options.model,
+    ...(enabledTools ? ["--tools", enabledTools.join(","), ...(allowedTools?.length ? ["--allowedTools", allowedTools.join(",")] : []),
+      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'] : []),
     ...(options.bundle ? ["--plugin-dir", options.bundle.plugin] : []),
-  ], options.signal, options.prompt);
+  ], options.signal, exchange ? { prompt: options.prompt, respond: exchange.respond } : options.prompt);
   const hidden = Object.entries(profile.environment ?? {})
     .filter(([key]) => /(?:token|key|secret|pass|auth|worker.brief)/i.test(key)).map(([, value]) => value);
-  return { code, ...parseClaudeTrace(stdout, hidden, profile.environment?.[workerBriefKey]) };
+  return { code, ...parseClaudeTrace(stdout, hidden, profile.environment?.[workerBriefKey], exchange?.questions) };
 }
 
 export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBackend {
-  if (!Number.isFinite(options.maxBudgetUsd) || options.maxBudgetUsd <= 0) throw new Error("A positive Claude API budget is required.");
+  const { authHome } = options;
+  const subscription = authHome !== undefined;
+  if (authHome !== undefined && (!isAbsolute(authHome) || (options.userHome !== undefined && !isAbsolute(options.userHome))
+    || options.launch || options.installNative)) {
+    throw new Error("Native Claude authentication requires absolute profile roots and a session-only plugin.");
+  }
   return { async run(raw, cancelled) {
     const request = backendRequestSchema.parse(raw);
     const clock = performance.now();
@@ -72,20 +99,45 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
       const workspace = await realpath(request.workspace);
       const archive = resolve(options.artifacts);
       if (behind(workspace, archive)) return result({ status: "blocked", reason: "The Claude trace archive overlaps the disposable workspace." });
-      scope = await mkdtemp(join(tmpdir(), "axiom-claude-profile-"));
+      let home: string;
+      let userHome: string;
+      if (authHome !== undefined) {
+        const selected = await realpath(authHome).catch(() => undefined);
+        if (!selected || !(await stat(selected)).isDirectory()) {
+          return result({ status: "blocked", reason: "The Claude subscription profile is unavailable." });
+        }
+        if (behind(workspace, selected) || behind(selected, workspace) || behind(archive, selected) || behind(selected, archive)) {
+          return result({ status: "blocked", reason: "The Claude subscription profile overlaps the fixture or evidence archive." });
+        }
+        home = selected;
+        userHome = options.userHome ?? homedir();
+      } else {
+        scope = await mkdtemp(join(tmpdir(), "axiom-claude-profile-"));
+        home = join(scope, "claude");
+        userHome = join(scope, "home");
+        await Promise.all([mkdir(home), mkdir(userHome)]);
+      }
       const profile: ClaudeProfile = {
-        program: options.program, workspace, home: join(scope, "claude"), userHome: join(scope, "home"),
+        program: options.program, workspace, home, userHome,
         ...(options.environment ? { environment: options.environment } : {}),
+        ...(options.launch ? { launch: options.launch } : {}),
       };
-      await Promise.all([mkdir(profile.home), mkdir(profile.userHome)]);
       if (await claudeVersion(profile, signal) !== request.host.version) {
         return result({ status: "blocked", reason: "The installed Claude CLI version differs from the request." });
       }
+      if (subscription && !await hasClaudeSubscription(profile, signal)) {
+        return result({ status: "blocked", reason: "Sign in to the selected Claude Code profile with a native claude.ai subscription." });
+      }
+      if (bundle && options.installNative) await configureClaudeProfile(profile, "user", "install", bundle, signal);
+      const clarification = options.clarification?.(request.caseId);
       const trace = await executeClaudeSession(profile, {
-        model: request.host.model, maxBudgetUsd: options.maxBudgetUsd, prompt: request.prompt, signal,
-        ...(bundle ? { bundle } : {}),
+        model: request.host.model, prompt: request.prompt, signal, subscription,
+        ...(bundle && !options.installNative ? { bundle } : {}),
+        ...(options.tools ? { tools: options.tools } : {}),
+        ...(clarification ? { clarification, useDisposableSettings: !!(options.launch && options.installNative) } : {}),
       });
-      usage = trace.usage;
+      usage = subscription && trace.usage.metering === "reported"
+        ? { metering: "reported", inputTokens: trace.usage.inputTokens, outputTokens: trace.usage.outputTokens } : trace.usage;
       if (trace.observation.observedModel !== request.host.model || trace.observation.observedVersion !== request.host.version) {
         return result({ status: "blocked", reason: "The requested Claude model and version were not independently observed." });
       }
@@ -93,6 +145,9 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
       await mkdir(archive, { recursive: true, mode: 0o700 });
       const storage = await realpath(archive);
       if (behind(workspace, storage)) return result({ status: "blocked", reason: "The Claude trace archive resolves inside the disposable workspace." });
+      if (subscription && (behind(home, storage) || behind(storage, home))) {
+        return result({ status: "blocked", reason: "The Claude trace archive resolves into the subscription profile scope." });
+      }
       const location = `${request.id}.${randomUUID()}.json`;
       const serialized = JSON.stringify({ actions: trace.actions, activation: trace.observation }) + "\n";
       await writeFile(join(storage, location), serialized, { flag: "wx", mode: 0o600 });
@@ -101,7 +156,8 @@ export function createClaudeBackend(options: ClaudeBackendOptions): BenchmarkBac
       if (bundle) {
         const activation = assessClaudeActivation(bundle, host, trace.observation);
         if (activation.outcome.status !== "passed") return result(activation.outcome);
-      } else if (trace.observation.discovered || trace.observation.policyDigests.length > 0) {
+      } else if (trace.observation.discovered || trace.observation.policyDigests.length > 0
+        || trace.observation.skills.some((name) => name.startsWith("axiom:"))) {
         return result({ status: "blocked", reason: "Axiom was unexpectedly active in the baseline Claude session." });
       }
       return result(trace.outcome);

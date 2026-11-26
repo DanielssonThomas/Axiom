@@ -8,7 +8,7 @@ import {
   evaluationCaseSchema, hostIdentitySchema, policyIdentitySchema, runLimitsSchema,
 } from "@axiom/contracts";
 import type { EvaluationCase, EvidenceOutcome } from "@axiom/contracts";
-import { evidenceSource, fixtureText, loadFixture, readFixture, stageFixture } from "./fixtures.js";
+import { evidenceSource, fixtureCaptureReason, fixtureText, loadFixture, readFixture, stageFixture } from "./fixtures.js";
 import { gradeAttempt, trustedArtifacts } from "./grade.js";
 import { abortable, closeRuntime } from "./lifecycle.js";
 import { blocked, notRun } from "./model.js";
@@ -90,7 +90,7 @@ async function executeAttempt(
     try {
       phase = "The backend did not return a valid execution result.";
       signal.throwIfAborted();
-      if (runtime.kind !== "fixture" && runtime.kind !== "isolated") throw new Error("Unknown runtime kind.");
+      if (runtime.kind !== "fixture" && runtime.kind !== "isolated" && runtime.kind !== "native") throw new Error("Unknown runtime kind.");
       attempt.runtime = runtime.kind;
       const request = backendRequestSchema.parse({
         id: attempt.id, caseId: evaluation.id, prompt: evaluation.prompt, workspace: runtime.workspace,
@@ -127,9 +127,12 @@ async function executeAttempt(
         ? blocked("The backend cannot waive an execution required by the run.") : execution.outcome);
     }
 
-    phase = "The delivered fixture could not be captured for independent grading.";
     signal.throwIfAborted();
-    const after = await readFixture(workspace);
+    const after = await readFixture(workspace).catch((error: unknown) => {
+      phase = fixtureCaptureReason(error);
+      throw error;
+    });
+    phase = "The captured fixture could not be prepared for independent source verification.";
     const scope = await evidenceSource(join(scratch, "verified-source"), after);
     phase = "Independent grading or evidence verification did not complete.";
     await gradeAttempt(evaluation, attempt, {
@@ -147,7 +150,7 @@ async function executeAttempt(
   }
 }
 
-/** Run paired trials within one wall-clock scheduling, attempt and concurrency budget. */
+/** Run paired trials with wall-clock, attempt, and concurrency limits. */
 export async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkReport> {
   const limits = runLimitsSchema.parse(options.limits);
   const host = hostIdentitySchema.parse(options.host);
@@ -158,7 +161,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<Benchmark
   if (!Number.isSafeInteger(options.repetitions) || options.repetitions < 1) {
     throw new Error("A positive repetition count is required.");
   }
-  // The report retains every scheduled attempt and assertion, including budget skips.
+  // The report retains every scheduled attempt and assertion, including unstarted work.
   const reportEntries = cases.reduce((total, evaluation) => total + 1 + evaluation.assertions.length, 0);
   if (reportEntries * options.repetitions * 2 > 10_000) {
     throw new Error("The benchmark plan is too large to retain its attempt and assertion reports.");

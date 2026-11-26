@@ -37,6 +37,10 @@ const repairCase = "settled-catalog-repair@1";
 const designCase = "reuse-summary-formatter@1";
 const commandPath = "src/catalog-command.mjs";
 const regressionPath = "test/catalog-command.test.mjs";
+export const unavailablePreviewCase = {
+  id: "report-unavailable-preview", version: "1", grader: "artifact.unavailable-verification",
+  criterion: "preview-layout", report: "verification.json", capabilityFile: "capabilities.json",
+} as const;
 
 const graders: Readonly<Record<string, Grader>> = {
   "trace.context-discovery": deterministic({
@@ -85,10 +89,8 @@ const graders: Readonly<Record<string, Grader>> = {
       test: "subscription displays the confirmed label",
     },
   }, gradeDelegation),
-  "artifact.unavailable-verification": deterministic({
-    "report-unavailable-preview@1": {
-      criterion: "preview-layout", report: "verification.json", capabilityFile: "capabilities.json",
-    },
+  [unavailablePreviewCase.grader]: deterministic({
+    [`${unavailablePreviewCase.id}@${unavailablePreviewCase.version}`]: unavailablePreviewCase,
   }, gradeUnavailableVerification),
   "review.prevention-scope": {
     kind: "behavioral",

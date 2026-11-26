@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { authorizeDispatch, parseLiveInputs, prepareReviewedBaseline, runLiveValidation } from "./live.mjs";
 import type { LiveInputs, TrustedLiveRunner } from "./live.mjs";
 
@@ -13,7 +13,7 @@ const repository = new URL("../../", import.meta.url);
 const env = {
   AXIOM_HOST: "codex", AXIOM_MODEL: "fixture-model", AXIOM_OS: "linux",
   AXIOM_BASELINE_REF: "a".repeat(40), AXIOM_BASELINE_DIGEST: `sha256:${"b".repeat(64)}`,
-  AXIOM_ATTEMPTS: "2", AXIOM_TIMEOUT_MINUTES: "1", AXIOM_TOKEN_BUDGET: "100",
+  AXIOM_ATTEMPTS: "2", AXIOM_TIMEOUT_MINUTES: "1",
 };
 const request = () => parseLiveInputs(env);
 const supported = { status: "passed" } as const;
@@ -33,8 +33,7 @@ test("runs locked foundation and fixture checks on all three hosted platforms wi
   expect(job.strategy["fail-fast"]).toBe(false);
   const commands = job.steps.map((step: { run?: string }) => step.run);
   expect(commands).toEqual(expect.arrayContaining([
-    "pnpm install --frozen-lockfile", "pnpm typecheck", "pnpm build",
-    "npm ci --prefix profiles/angular-nx/evals/fixtures/angular-workspace", "pnpm test",
+    "pnpm install --frozen-lockfile", "pnpm typecheck", "pnpm build", "pnpm test",
   ]));
   expect(job.steps.find((step: { uses?: string }) => step.uses?.startsWith("actions/checkout@")).with["persist-credentials"]).toBe(false);
   expect(deterministic.jobs.deterministic.needs).toBe("platform");
@@ -43,6 +42,7 @@ test("runs locked foundation and fixture checks on all three hosted platforms wi
 test("limits live CI to an explicit owner-run dispatch on main and publishes one curated file", () => {
   const live = workflow("live-validation.yml");
   expect(Object.keys(live.on)).toEqual(["workflow_dispatch"]);
+  expect(live.on.workflow_dispatch.inputs.allow_paid).toMatchObject({ type: "boolean", default: false, required: true });
   const job = live.jobs.live;
   expect(job.if).toContain("github.ref == 'refs/heads/main'");
   expect(job.if).toContain("github.triggering_actor == github.repository_owner");
@@ -60,12 +60,33 @@ test("limits live CI to an explicit owner-run dispatch on main and publishes one
   ]) expect(authorizeDispatch({ ...owner, ...change })).toBe(false);
 });
 
+test("the installed-host runner requires separate paid approval before inspecting credentials", async () => {
+  const runnerUrl = new URL("../integration/hosts/ci-runner.mjs", import.meta.url).href;
+  const runner = (await import(runnerUrl)).default as TrustedLiveRunner;
+  vi.stubEnv("AXIOM_ALLOW_PAID", "false");
+  vi.stubEnv("ANTHROPIC_API_KEY", "credential-canary");
+  try {
+    const host = { host: "claude", model: "claude-haiku-4-5-20251001", os: "linux" } as const;
+    expect(await runner.readiness(host, new AbortController().signal)).toBe("authorization-required");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("the strict installed-host batch includes reuse, verification reporting, and both reviewed clarification cases", async () => {
+  const runnerUrl = new URL("../integration/hosts/ci-runner.mjs", import.meta.url).href;
+  const { claudeQualificationCases } = await import(runnerUrl) as { claudeQualificationCases?: readonly string[] };
+  expect(claudeQualificationCases).toEqual([
+    "reuse-summary-formatter", "report-unavailable-preview", "clarify-material-decision", "resolve-format-decision",
+  ]);
+});
+
 test("requires a complete immutable host selection and bounded numeric limits", () => {
-  expect(request()).toMatchObject({ host: "codex", model: "fixture-model", os: "linux", attempts: 2, tokenBudget: 100 });
+  expect(request()).toMatchObject({ host: "codex", model: "fixture-model", os: "linux", attempts: 2 });
   for (const invalid of [
     { AXIOM_HOST: "other" }, { AXIOM_MODEL: "x; output" }, { AXIOM_OS: "unknown" },
     { AXIOM_BASELINE_REF: "main" }, { AXIOM_BASELINE_DIGEST: "unknown" },
-    { AXIOM_ATTEMPTS: "0" }, { AXIOM_TIMEOUT_MINUTES: "21" }, { AXIOM_TOKEN_BUDGET: "NaN" },
+    { AXIOM_ATTEMPTS: "0" }, { AXIOM_TIMEOUT_MINUTES: "21" },
   ]) expect(() => parseLiveInputs({ ...env, ...invalid })).toThrow();
 });
 
@@ -131,26 +152,21 @@ test("rejects an empty or excessive direct run plan before the runner is opened"
   }
 });
 
-test("preserves results, spends a shrinking explicit token budget and stops when it is exhausted", async () => {
+test("runs all authorized attempts and records available usage without gating evidence on it", async () => {
   const input = request();
-  const allocations: number[] = [];
-  const passed = await runLiveValidation(input, approved, driver(async (trial) => {
-    allocations.push(trial.tokenLimit);
-    return metered(input, 40);
+  const attempted: number[] = [];
+  const report = await runLiveValidation(input, approved, driver(async (trial) => {
+    attempted.push(trial.attempt);
+    return trial.attempt === 1 ? {
+      ...metered(input, 0), metering: { metering: "unknown", reason: "No counts" },
+    } : metered(input, 2_000_000);
   }));
-  expect(allocations).toEqual([100, 60]);
-  expect(passed.outcome.status).toBe("passed");
-  expect(passed.baselineDigest).toBe(approved.digest);
-  const exhausted = await runLiveValidation(input, approved, driver(async () => metered(input, 100)));
-  expect(exhausted.attempts.map(({ outcome }) => outcome.status)).toEqual(["passed", "not_run"]);
-  expect(exhausted.outcome.status).not.toBe("passed");
-  const unmetered = await runLiveValidation(input, approved, driver(async () => ({
-    ...metered(input, 0), metering: { metering: "unknown", reason: "No counts" },
-  })));
-  expect(unmetered.attempts.map(({ outcome }) => outcome.status)).toEqual(["blocked", "not_run"]);
-  const overrun = await runLiveValidation(input, approved, driver(async () => metered(input, 110)));
-  expect(overrun.attempts[0]?.outcome.status).toBe("failed");
-  expect(overrun.attempts[1]?.outcome.status).toBe("not_run");
+  expect(attempted).toEqual([1, 2]);
+  expect(report.outcome.status).toBe("passed");
+  expect(report.baselineDigest).toBe(approved.digest);
+  expect(report.attempts.map(({ outcome }) => outcome.status)).toEqual(["passed", "passed"]);
+  expect(report.attempts[0]).not.toHaveProperty("inputTokens");
+  expect(report.attempts[1]).toMatchObject({ inputTokens: 2_000_000, outputTokens: 0 });
 });
 
 test("retains cancellation and keeps raw runner data and private reasons out of summary output", async () => {

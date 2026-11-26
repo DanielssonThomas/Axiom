@@ -1,11 +1,10 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, stat, rm, writeFile } from "node:fs/promises";
+import { stat, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { digestSchema, evidenceOutcomeSchema, usageSchema } from "@axiom/contracts";
 import type { EvidenceOutcome, ResultStatus, Usage } from "@axiom/contracts";
+import { isCommit, prepareReviewedBaseline, type ReviewedBaseline } from "../../packages/cli/src/reviewed-baseline.ts";
+export { prepareReviewedBaseline };
 
 interface DispatchIdentity {
   event?: string | undefined;
@@ -28,16 +27,11 @@ export interface LiveInputs {
   baselineDigest: string;
   attempts: number;
   timeoutMinutes: number;
-  tokenBudget: number;
 }
 
 function positiveInteger(input: string | undefined, max: number): number {
   if (!input || !/^[1-9]\d*$/.test(input) || Number(input) > max) throw new Error("The live run limits are invalid.");
   return Number(input);
-}
-
-function isCommit(input: string | undefined): input is string {
-  return Boolean(input && /^[a-f0-9]{40}$/.test(input));
 }
 
 export function parseLiveInputs(environment: NodeJS.ProcessEnv): LiveInputs {
@@ -50,43 +44,7 @@ export function parseLiveInputs(environment: NodeJS.ProcessEnv): LiveInputs {
     host, model, os, baselineRef, baselineDigest: digestSchema.parse(environment.AXIOM_BASELINE_DIGEST),
     attempts: positiveInteger(environment.AXIOM_ATTEMPTS, 25),
     timeoutMinutes: positiveInteger(environment.AXIOM_TIMEOUT_MINUTES, 15),
-    tokenBudget: positiveInteger(environment.AXIOM_TOKEN_BUDGET, 1_000_000),
   };
-}
-
-const exec = promisify(execFile);
-
-interface ReviewedBaseline {
-  directory: string;
-  digest: string;
-}
-
-/** Export the reviewed Git tree, whose archived bytes are the inputs given to the verifier. */
-export async function prepareReviewedBaseline(
-  checkout: string, temporary: string, revision: string, input: LiveInputs,
-): Promise<ReviewedBaseline> {
-  if (!isCommit(revision) || !isCommit(input.baselineRef)) throw new Error("A reviewed revision is required.");
-  await exec("git", ["merge-base", "--is-ancestor", input.baselineRef, revision], { cwd: checkout }).catch(() => {
-    throw new Error("The baseline is outside the reviewed revision's history.");
-  });
-  const { stdout } = await exec("git", ["archive", "--format=tar", input.baselineRef, "--", "core", "evals", "profiles", "skills"], {
-    cwd: checkout,
-    encoding: "buffer",
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  const digest = `sha256:${createHash("sha256").update(stdout).digest("hex")}`;
-  if (digest !== input.baselineDigest) throw new Error("The reviewed baseline digest does not match.");
-  const directory = await mkdtemp(join(temporary, "axiom-reviewed-"));
-  const archive = join(directory, "baseline.tar");
-  try {
-    await writeFile(archive, stdout, { flag: "wx", mode: 0o600 });
-    await exec("tar", ["-xf", archive, "-C", directory]);
-    await rm(archive);
-    return { directory, digest };
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
 }
 
 interface LiveTrial {
@@ -94,15 +52,14 @@ interface LiveTrial {
   model: string;
   os: LiveInputs["os"];
   attempt: number;
-  tokenLimit: number;
   baseline: ReviewedBaseline;
+  baselineRef?: string;
 }
 
-/** The trusted installed-host runner enforces tokenLimit before provider calls, isolates agent access
- * from the verifier baseline, terminates on abort, and returns independently observed installed-host evidence. */
+/** The trusted runner isolates the verifier baseline, terminates on abort, and returns independently observed installed-host evidence. */
 export interface TrustedLiveRunner {
   readiness(input: Pick<LiveTrial, "host" | "model" | "os">, signal: AbortSignal):
-    Promise<"ready" | "runner-unavailable" | "credentials-unavailable">;
+    Promise<"ready" | "runner-unavailable" | "credentials-unavailable" | "authorization-required">;
   run(trial: LiveTrial, signal: AbortSignal): Promise<unknown>;
 }
 
@@ -158,7 +115,6 @@ export async function runLiveValidation(
 ) {
   positiveInteger(String(input.attempts), 25);
   positiveInteger(String(input.timeoutMinutes), 15);
-  positiveInteger(String(input.tokenBudget), 1_000_000);
   const { host, model, os } = input;
   const attempts: LiveAttempt[] = Array.from({ length: input.attempts }, (_, index) => ({
     attempt: index + 1, outcome: notRun("The attempt has not started."),
@@ -167,7 +123,6 @@ export async function runLiveValidation(
   const timeout = setTimeout(() => controller.abort(), input.timeoutMinutes * 60_000);
   const signal = cancellation ? AbortSignal.any([controller.signal, cancellation]) : controller.signal;
   const interruption = () => cancellation?.aborted ? "The live run was cancelled." : "The live run timed out.";
-  let remaining = input.tokenBudget;
   let unavailable: string | undefined;
   try {
     if (baseline.digest !== input.baselineDigest) unavailable = "The reviewed baseline identity does not match.";
@@ -176,6 +131,7 @@ export async function runLiveValidation(
       const readiness = await bounded(() => runner.readiness({ host, model, os }, signal), signal).catch(() => "runner-unavailable");
       if (readiness !== "ready") unavailable = signal.aborted ? interruption()
         : readiness === "credentials-unavailable" ? "The installed host credentials are unavailable."
+        : readiness === "authorization-required" ? "Paid benchmark execution was not explicitly authorized."
         : "The installed-host runner is unavailable.";
     }
 
@@ -184,32 +140,22 @@ export async function runLiveValidation(
         attempt.outcome = notRun(unavailable ?? "The installed-host runner is unavailable.");
         continue;
       }
-      if (signal.aborted || remaining === 0) {
-        attempt.outcome = notRun(signal.aborted ? interruption() : "The token budget is exhausted.");
+      if (signal.aborted) {
+        attempt.outcome = notRun(interruption());
         continue;
       }
       try {
         const value = await bounded(() => runner.run({
-          host, model, os, attempt: attempt.attempt, tokenLimit: remaining, baseline,
+          host, model, os, attempt: attempt.attempt, baseline, baselineRef: input.baselineRef,
         }, signal), signal);
         const observed = observedResult(value, input);
         attempt.outcome = observed.outcome;
         if (observed.evidenceDigest) attempt.evidenceDigest = observed.evidenceDigest;
         if (observed.observedStatus) attempt.observedStatus = observed.observedStatus;
         const usage = observed.metering;
-        if (usage?.metering !== "reported" || usage.inputTokens === undefined || usage.outputTokens === undefined) {
-          if (attempt.outcome.status === "passed") attempt.outcome = blocked("Actual token usage was unavailable.");
-          unavailable = "Further attempts require complete token metering.";
-          continue;
-        }
-        attempt.inputTokens = usage.inputTokens;
-        attempt.outputTokens = usage.outputTokens;
-        const spent = usage.inputTokens + usage.outputTokens;
-        if (spent > remaining) {
-          attempt.outcome = { status: "failed", reason: "The installed host exceeded the allocated token budget." };
-          remaining = 0;
-        } else {
-          remaining -= spent;
+        if (usage?.metering === "reported") {
+          if (usage.inputTokens !== undefined) attempt.inputTokens = usage.inputTokens;
+          if (usage.outputTokens !== undefined) attempt.outputTokens = usage.outputTokens;
         }
       } catch {
         attempt.outcome = blocked(signal.aborted ? interruption() : "The installed-host runner did not return observable results.");
@@ -224,7 +170,7 @@ export async function runLiveValidation(
     : !unavailable && attempts.every((attempt) => attempt.outcome.status === "passed")
       ? { status: "passed" }
       : blocked(unavailable ?? "Required installed-host evidence is incomplete.");
-  return { host, model, os, baselineRef: input.baselineRef, baselineDigest: baseline.digest, tokenBudget: input.tokenBudget,
+  return { host, model, os, baselineRef: input.baselineRef, baselineDigest: baseline.digest,
     timeoutMinutes: input.timeoutMinutes, attempts, outcome };
 }
 

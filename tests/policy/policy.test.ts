@@ -21,7 +21,7 @@ function json(path: string, value: unknown) {
 }
 
 const uiPath = "profiles/ui-atomic/profile.json";
-const angularPath = "profiles/angular-nx/profile.json";
+const featurePath = "profiles/fixture-profile/profile.json";
 const ui = {
   id: "ui-atomic",
   version: "1",
@@ -32,8 +32,8 @@ const ui = {
     { id: "ui.optional", required: false, principleIds: ["AX-04"] },
   ],
 };
-const angular = {
-  id: "angular-nx",
+const feature = {
+  id: "fixture-profile",
   version: "2",
   extends: ["ui-atomic"],
   principleIds: ["AX-03"],
@@ -41,7 +41,7 @@ const angular = {
 };
 const catalog = {
   core,
-  profiles: [json(uiPath, ui), json(angularPath, angular)],
+  profiles: [json(uiPath, ui), json(featurePath, feature)],
   checks,
 };
 
@@ -75,18 +75,18 @@ describe("policy resolution", () => {
   });
 
   test("composes inherited requirements with provenance independent of input order", () => {
-    const inherited = resolvePolicy(catalog, ["angular-nx"]);
-    const reversed = resolvePolicy({ ...catalog, profiles: [...catalog.profiles].reverse() }, ["ui-atomic", "angular-nx"]);
+    const inherited = resolvePolicy(catalog, ["fixture-profile"]);
+    const reversed = resolvePolicy({ ...catalog, profiles: [...catalog.profiles].reverse() }, ["ui-atomic", "fixture-profile"]);
 
     expect(inherited).toEqual(reversed);
     expect(inherited.diagnostics).toEqual([]);
     expect(inherited.policy?.identity.profiles).toEqual([
-      { id: "angular-nx", version: "2" }, { id: "ui-atomic", version: "1" },
+      { id: "fixture-profile", version: "2" }, { id: "ui-atomic", version: "1" },
     ]);
     expect(inherited.policy?.requirements.find(({ id }) => id === "ui.composition")).toEqual({
       id: "ui.composition", kind: "mechanical", required: true, principleIds: ["AX-03"],
       origins: [
-        { kind: "profile", id: "angular-nx", path: angularPath },
+        { kind: "profile", id: "fixture-profile", path: featurePath },
         { kind: "profile", id: "ui-atomic", path: uiPath },
       ],
     });
@@ -106,11 +106,11 @@ describe("policy resolution", () => {
   test("rejects incompatible active requirements and attempts to weaken a core check", () => {
     const conflict = resolvePolicy({
       ...catalog,
-      profiles: [json(uiPath, ui), json(angularPath, {
-        ...angular, checks: [{ id: "ui.composition", required: false, principleIds: ["AX-03"] }],
+      profiles: [json(uiPath, ui), json(featurePath, {
+        ...feature, checks: [{ id: "ui.composition", required: false, principleIds: ["AX-03"] }],
       })],
-    }, ["angular-nx"]);
-    expect(conflict.diagnostics).toContainEqual(expect.objectContaining({ code: "incompatible_requirement", path: angularPath, field: "checks.0" }));
+    }, ["fixture-profile"]);
+    expect(conflict.diagnostics).toContainEqual(expect.objectContaining({ code: "incompatible_requirement", path: featurePath, field: "checks.0" }));
     expect(assessPolicy(conflict, []).outcome.status).toBe("blocked");
 
     const weaker = resolvePolicy({
@@ -169,7 +169,7 @@ describe("structural validation", () => {
           principleIds: ["AX-99"],
           checks: [{ id: "unknown", required: true, principleIds: ["AX-03"] }],
         }),
-        json(unknownProfilePath, { ...angular, version: 4 }),
+        json(unknownProfilePath, { ...feature, version: 4 }),
         { path: invalidJsonPath, text: "{" },
       ],
       skills: [
@@ -200,12 +200,12 @@ describe("structural validation", () => {
 
   test("detects profile cycles deterministically at the closing reference", () => {
     const cyclic = resolvePolicy({
-      ...catalog, profiles: [json(uiPath, { ...ui, extends: ["angular-nx"] }), json(angularPath, angular)],
-    }, ["angular-nx"]);
+      ...catalog, profiles: [json(uiPath, { ...ui, extends: ["fixture-profile"] }), json(featurePath, feature)],
+    }, ["fixture-profile"]);
     expect(cyclic.diagnostics).toEqual([
       expect.objectContaining({
         code: "profile_cycle", path: uiPath, field: "extends.0",
-        message: expect.stringContaining("angular-nx -> ui-atomic -> angular-nx"),
+        message: expect.stringContaining("fixture-profile -> ui-atomic -> fixture-profile"),
       }),
     ]);
   });

@@ -1,5 +1,6 @@
 export { assembleBundles } from "./assemble.js";
 export { writeBundles } from "./write.js";
+export { loadBundleWorkspace } from "./workspace.js";
 export type {
   BundleAdapter,
   BundleArtifact,

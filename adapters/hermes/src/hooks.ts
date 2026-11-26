@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { evidenceSchema } from "@axiom/contracts";
+import { evidenceSchema, taskBriefSchema } from "@axiom/contracts";
+import { isDeepStrictEqual } from "node:util";
 import type { Evidence, EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { assessPolicy } from "@axiom/policy";
 import { digest, readBundle, verifyBundle } from "./bundle.js";
-import { inspectHermesActivation } from "./profile.js";
+import { formatHermesWorkerContext, inspectHermesActivation } from "./profile.js";
 import type { HermesProfile } from "./profile.js";
 
 const checkId = "hermes-bundle-integrity";
@@ -16,11 +17,63 @@ export type HermesEvent = "pre-tool" | "resume" | "compaction" | "delegation";
 interface HookObservation {
   outcome: EvidenceOutcome;
   evidence?: Evidence;
+  workerBriefCorrection?: string;
+  workerBriefPatches?: Array<{ context: string; notes: string } | null>;
+}
+
+const briefFields = new Set(Object.keys(taskBriefSchema.shape));
+
+/** Keep the first complete JSON object and retain any separate native task notes. */
+export function parseHermesWorkerBrief(body: string) {
+  const input = body.trimStart();
+  if (input[0] !== "{") throw new Error("Expected a JSON worker brief.");
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < input.length; index++) {
+    const character = input[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === "{") depth++;
+    else if (character === "}" && --depth === 0) {
+      const entries = Object.entries(JSON.parse(input.slice(0, index + 1)));
+      const brief = taskBriefSchema.parse(Object.fromEntries(entries.filter(([key]) => briefFields.has(key))));
+      const extra = entries.filter(([key]) => !briefFields.has(key));
+      const trailing = input.slice(index + 1).trim();
+      const notes = [extra.length ? JSON.stringify(Object.fromEntries(extra)) : "", trailing].filter(Boolean).join("\n\n");
+      return { brief, notes };
+    }
+  }
+  throw new Error("Expected a complete JSON worker brief.");
+}
+
+function checkWorkerBriefs(contexts: readonly string[], policy: Evidence["policy"]) {
+  const patches: NonNullable<HookObservation["workerBriefPatches"]> = [];
+  try {
+    for (const context of contexts) {
+      const { brief, notes } = parseHermesWorkerBrief(context);
+      if (!brief.parentId || brief.parentId === brief.id || !isDeepStrictEqual(brief.policy, policy)) {
+        throw new Error("Worker brief names a different policy or omits parent lineage.");
+      }
+      patches.push(notes ? { context: formatHermesWorkerContext(brief), notes } : null);
+    }
+    return patches.some(Boolean) ? { workerBriefPatches: patches } : {};
+  } catch {
+    return { workerBriefCorrection: "Provide the complete Axiom worker brief in the marked context before launching. "
+      + "Assign a distinct local worker id and copy the actual parentId. Include objective, ownedPaths, criteria, requiredCapabilities and limits. "
+      + "Use process-execution for running verification commands. Copy policy with its exact version, digest and profiles." };
+  }
 }
 
 /** Assess the installed policy payload and retain the observed check through the shared archive. */
 export async function checkHermesEvent(
-  directory: string, archive: string, event: HermesEvent, native?: { profile: HermesProfile; session: string },
+  directory: string, archive: string, event: HermesEvent,
+  native?: { profile: HermesProfile; session: string; workerBriefs?: readonly string[] },
 ): Promise<HookObservation> {
   const started = new Date();
   let manifest;
@@ -44,8 +97,8 @@ export async function checkHermesEvent(
     }
     if (native && observed.status === "passed") {
       const activation = inspectHermesActivation(native.profile, native.session);
-      if (activation.policy?.digest !== manifest.policy.digest || activation.loaded.status !== "passed") {
-        observed = { status: "blocked", reason: "Required Axiom loading is absent in the current Hermes session." };
+      if (activation.policy?.digest !== manifest.policy.digest || activation.coreLoaded.status !== "passed") {
+        observed = { status: "blocked", reason: "Required Axiom core loading is absent in the current Hermes session." };
       }
     }
     const assessment = assessPolicy({
@@ -75,7 +128,9 @@ export async function checkHermesEvent(
       provenance: "observed", artifacts: [], outcome,
     });
     await new EvidenceStore(archive).record("acceptance", evidence);
-    return { outcome, evidence };
+    const workerBrief = outcome.status === "passed" && native?.workerBriefs?.length
+      ? checkWorkerBriefs(native.workerBriefs, manifest.policy) : {};
+    return { outcome, evidence, ...workerBrief };
   } catch {
     return { outcome: { status: "blocked", reason: "The Hermes lifecycle evidence archive could not be written." } };
   }

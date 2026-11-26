@@ -13,6 +13,10 @@ export interface CodexProfile {
 interface NativeOptions {
   signal?: AbortSignal;
   input?: string;
+  /** Capture short administrative diagnostics in memory. Turn stderr is always discarded. */
+  captureStderr?: boolean;
+  /** Opt in to experimental app-server methods during JSON-RPC initialization. */
+  experimentalApi?: true;
   onLine?: (line: string, write: (value: unknown) => void, end: () => void) => void;
 }
 
@@ -24,9 +28,11 @@ export async function runCodex(profile: CodexProfile, args: readonly string[], o
   const child = spawn(profile.program, args, {
     cwd: profile.workspace, shell: false, detached: group, windowsHide: true,
     env: { PATH: process.env.PATH, ...profile.environment, HOME: profile.userHome, CODEX_HOME: profile.home },
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", options.captureStderr ? "pipe" : "ignore"],
   });
-  return await new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+  const input = child.stdin!;
+  const output = child.stdout!;
+  return await new Promise<{ code: number | null; stdout: string; stderr?: string }>((resolve, reject) => {
     const kill = () => {
       if (group && child.pid) {
         try {
@@ -38,9 +44,10 @@ export async function runCodex(profile: CodexProfile, args: readonly string[], o
     };
     let error: unknown;
     let stdout = "";
+    let stderr = "";
     let pending = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    output.setEncoding("utf8");
+    output.on("data", (chunk: string) => {
       if (stdout.length + chunk.length > 8 * 1024 * 1024) {
         error = new Error("The Codex output limit was exceeded.");
         kill();
@@ -52,29 +59,40 @@ export async function runCodex(profile: CodexProfile, args: readonly string[], o
       pending = lines.pop() ?? "";
       for (const line of lines) {
         try {
-          options.onLine(line, (value) => child.stdin.write(JSON.stringify(value) + "\n"), () => child.stdin.end());
+          options.onLine(line, (value) => input.write(JSON.stringify(value) + "\n"), () => input.end());
         } catch (failure) {
           error = failure;
           kill();
         }
       }
     });
-    child.stdin.on("error", () => { /* The host can terminate before reading stdin. */ });
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      if (stderr.length + chunk.length > 16 * 1024) {
+        error = new Error("The Codex diagnostic output limit was exceeded.");
+        kill();
+      } else {
+        stderr += chunk;
+      }
+    });
+    input.on("error", () => { /* The host can terminate before reading stdin. */ });
     child.once("error", (failure) => { error ??= failure; });
     child.once("close", (code) => {
       signal.removeEventListener("abort", kill);
       if (signal.aborted) reject(signal.reason);
       else if (error) reject(error);
-      else resolve({ code, stdout });
+      else resolve({ code, stdout, ...(options.captureStderr ? { stderr } : {}) });
     });
     signal.addEventListener("abort", kill, { once: true });
     if (signal.aborted) kill();
     if (options.onLine) {
-      child.stdin.write(JSON.stringify({
-        id: 1, method: "initialize", params: { clientInfo: { name: "axiom-native-adapter", version: "1.0.0" } },
+      input.write(JSON.stringify({
+        id: 1, method: "initialize", params: {
+          clientInfo: { name: "axiom-native-adapter", version: "1.0.0" },
+          ...(options.experimentalApi && { capabilities: { experimentalApi: true } }),
+        },
       }) + "\n");
     } else {
-      child.stdin.end(options.input);
+      input.end(options.input);
     }
   });
 }

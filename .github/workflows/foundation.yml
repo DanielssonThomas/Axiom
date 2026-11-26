@@ -29,10 +29,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm build
-      - run: npm ci --prefix profiles/angular-nx/evals/fixtures/angular-workspace
       - run: pnpm test
-        env:
-          AXIOM_ANGULAR_FIXTURE_MODULES: ${{ github.workspace }}/profiles/angular-nx/evals/fixtures/angular-workspace/node_modules
 
   deterministic:
     name: Deterministic checks

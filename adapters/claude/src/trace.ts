@@ -1,9 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { capabilitySchema, digestSchema, usageSchema, type Capability, type EvidenceOutcome, type HostIdentity, type PolicyIdentity, type Usage } from "@axiom/contracts";
 import { pluginId, supportedVersion, type ClaudeBundle } from "./bundle.js";
+import { withheldAnswer, type WithheldQuestion } from "./clarification.js";
 import { array, corePolicyPath, object, parseWorkerBrief, policyPaths, sha256, workerBriefMarker, workerIdentityMarker } from "./runtime.js";
 
-type Action = { kind: "read" | "edit"; path: string } | { kind: "command"; command: string };
+type Action = { kind: "read" | "edit"; path: string } | { kind: "command"; command: string }
+  | { kind: "ask"; topic: string };
 type HookFailure = EvidenceOutcome & { status: "failed" | "blocked" };
 interface PolicySection { policyDigest: string; path: string; digest: string }
 interface ObservedWorker {
@@ -88,9 +90,14 @@ function readHookContext(raw: unknown) {
   } catch { /* Other native hooks can return plain stdout. */ }
 }
 
-export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[] = [], stagedWorkerBrief?: string) {
+export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[] = [], stagedWorkerBrief?: string,
+  withheldQuestions?: ReadonlyMap<string, WithheldQuestion>) {
   const actions: Action[] = [];
   const pendingTools = new Map<string, Action>();
+  const questionTools = new Set<string>();
+  const pendingQuestions = new Map<string, Action>();
+  const confirmedQuestions = new Set<Action>();
+  const observedActions = () => actions.filter((action) => action.kind !== "ask" || confirmedQuestions.has(action));
   const observation: ClaudeSessionObservation = {
     discovered: false, selected: false, skills: [], policyDigests: [], policySections: [], workers: [],
   };
@@ -103,7 +110,7 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
     if (!line.trim()) continue;
     let event: Record<string, unknown>;
     try { event = object(JSON.parse(line)); }
-    catch { return { actions, observation, usage, outcome: { status: "blocked", reason: "Claude Code emitted malformed JSONL." } as const }; }
+    catch { return { actions: observedActions(), observation, usage, outcome: { status: "blocked", reason: "Claude Code emitted malformed JSONL." } as const }; }
 
     if (event.type === "system" && event.subtype === "init") {
       observation.skills = array(event.skills).filter((name): name is string => typeof name === "string");
@@ -158,6 +165,7 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
       for (const local of array(object(event.message).content).map(object)) {
         if (local.type !== "tool_use" || typeof local.id !== "string") continue;
         const input = object(local.input);
+        if (local.name === "AskUserQuestion") questionTools.add(local.id);
         if ((local.name === "Read" || local.name === "Write" || local.name === "Edit") && typeof input.file_path === "string") {
           pendingTools.set(local.id, { kind: local.name === "Read" ? "read" : "edit", path: redact(input.file_path) });
         }
@@ -165,12 +173,25 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
           pendingTools.set(local.id, { kind: "command", command: redact(input.command) });
         }
       }
+    } else if (event.type === "control_request" && typeof event.request_id === "string") {
+      const question = withheldQuestions?.get(event.request_id);
+      if (question && questionTools.delete(question.toolUseId)) {
+        const action: Action = { kind: "ask", topic: question.topic };
+        pendingQuestions.set(question.toolUseId, action);
+        actions.push(action);
+      }
     } else if (event.type === "user") {
       for (const local of array(object(event.message).content).map(object)) {
         if (local.type !== "tool_result" || typeof local.tool_use_id !== "string") continue;
         const action = pendingTools.get(local.tool_use_id);
         if (action && local.is_error !== true) actions.push(action);
         pendingTools.delete(local.tool_use_id);
+        const ask = pendingQuestions.get(local.tool_use_id);
+        if (ask && local.is_error === true && local.content === withheldAnswer && array(event.tool_result_meta).map(object).some((meta) => {
+          const permission = object(meta.permission_decision);
+          return meta.id === local.tool_use_id && permission.decision === "reject" && permission.source === "user_reject";
+        })) confirmedQuestions.add(ask);
+        pendingQuestions.delete(local.tool_use_id);
       }
     } else if (event.type === "result") {
       const native = object(event.usage);
@@ -183,5 +204,5 @@ export function parseClaudeTrace(raw: string, sensitiveValues: readonly string[]
         ? { status: "passed" } : { status: "blocked", reason: "Claude Code returned an incomplete native result." };
     }
   }
-  return { actions, observation, usage, outcome };
+  return { actions: observedActions(), observation, usage, outcome };
 }

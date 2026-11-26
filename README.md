@@ -6,7 +6,7 @@ Axiom is a shared foundation for agents to discover context, reuse existing capa
 
 ## Status
 
-The workspace includes shared contracts, a policy resolver, an evidence recorder, a verification engine, and read-only doctor diagnostics. All six portable skills and both optional profiles have deterministic fixture coverage. The CLI parses the v1 commands and reports unimplemented operations. Native adapter qualification and release validation are pending.
+The workspace includes shared contracts, a policy resolver, an evidence recorder, a verification engine, and read-only doctor diagnostics. All six portable skills and both optional profiles have deterministic fixture coverage. The pinned Claude Code, Codex, and Hermes adapters have native Linux loopback evidence. Final installed-host qualification and release validation are pending.
 
 Implementation is organized under the [Axiom v1 Epic](https://github.com/DanielssonThomas/Axiom/issues/1) and the [Axiom v1 milestone](https://github.com/DanielssonThomas/Axiom/milestone/1). Start with [the foundation issue](https://github.com/DanielssonThomas/Axiom/issues/2); its contracts enable the parallel workstreams.
 
@@ -16,7 +16,7 @@ Implementation is organized under the [Axiom v1 Epic](https://github.com/Daniels
 | --- | --- |
 | Core fundamentals | Stable principles with explicit conformance requirements. |
 | Portable skills | Focused workflows, progressive references, and executable evaluation cases. |
-| Optional profiles | Atomic UI design and Angular/Nx conventions without putting framework details in the core. |
+| Optional profiles | Framework-independent atomic UI design, selected explicitly for applicable work. |
 | Native adapters | Claude Code, Codex, and Hermes installation, activation, capability reporting, and lifecycle handling. |
 | Validation and evidence | Structural checks, repository-native tests, behavioral evaluations, and honest runtime verification. |
 
@@ -39,7 +39,7 @@ pnpm typecheck
 pnpm build
 ```
 
-`pnpm test -- <path>` builds the workspace and runs only the matching test files. After building, run the CLI with `node packages/cli/dist/index.js doctor`.
+`pnpm test -- <path>` builds the workspace and runs only the matching test files. After building, run the CLI with `node packages/cli/dist/index.js doctor --request /absolute/path/to/request.mjs`. The [CLI contract](docs/architecture.md#cli) describes the operator inputs for each command.
 
 Each implementation issue defines owned paths, prerequisites, measurable acceptance criteria, and validation. Use a separate branch or worktree. Coordinate shared contracts, manifests, and lockfiles through the integration owner. Parallel work starts when the required contracts are merged.
 

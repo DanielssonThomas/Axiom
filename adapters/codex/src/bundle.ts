@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { PolicyIdentity } from "@axiom/contracts";
+import { capabilityIdSchema, taskBriefSchema, type PolicyIdentity } from "@axiom/contracts";
 import { resolvePolicy, type PolicyCatalog } from "@axiom/policy";
 
 export const marketplace = "axiom-local";
@@ -71,7 +71,22 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
     readFile(join(source, "profiles", id, "PROFILE.md"), "utf8")));
   const policyBody = [input.catalog.core.text, ...profiles].map((document) =>
     document.replaceAll("\r\n", "\n").trimEnd()).join("\n\n");
-  const instructions = `Axiom policy digest: ${policy.digest}\n\n${policyBody}`;
+  const workflow = [
+    ...(skills.verify ? ["Keep verification edits within the task scope. Reuse existing tests or a temporary check for changes that reuse existing behavior. "
+      + "When the project requires a regression test, open axiom:verify and save the regression before changing implementation. "
+      + "Run the complete repository verification command as its own shell call, with the existing protected acceptance checks. "
+      + "Observe the expected failure before the repair. Repeat the full command after the repair."] : []),
+    ...(skills.delegate ? ["Open axiom:delegate before launching a worker. For native Codex V2, write the complete JSON TaskBrief "
+      + "at .axiom/<task_name>.json. Use the same lowercase underscore-separated value for id, file stem, and native task_name. "
+      + "Use exactly these top-level fields: id, parentId, objective, ownedPaths, criteria, requiredCapabilities, limits, policy. "
+      + "Put supplemental task details inside objective. Use the capability ID process-execution when the worker must run commands. "
+      + "Each criterion has id, description, and required. Each limits object has "
+      + "timeoutMs, maxAttempts, and maxConcurrency. Copy this exact object into policy: " + JSON.stringify(policy)
+      + ". Run sha256sum -- <path> by itself before spawning. Give the worker the reference path and actual digest in the native "
+      + "message. As the worker, read that exact file with a standalone cat -- <path> command before editing and check the digest. "
+      + "After the worker returns, inspect the delivered source, remove the temporary brief, and run the complete verification command by itself."] : []),
+  ];
+  const instructions = [`Axiom policy digest: ${policy.digest}`, policyBody, ...workflow].join("\n\n");
   if (instructions.includes(startMarker) || instructions.includes(endMarker)) throw new Error("Axiom content contains a reserved profile marker.");
 
   await mkdir(root, { recursive: true });
@@ -84,11 +99,26 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
       policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
     }],
   }));
+  const workflowMatcher = [skills.verify && "Bash", skills.delegate && "collaborationspawn_agent"].filter(Boolean).join("|");
   await write(join(plugin, ".codex-plugin/plugin.json"), json({
     name: "axiom", version: input.version, description: "Axiom engineering workflows.", skills: "./skills/",
+    ...(workflowMatcher && { hooks: "./hooks/hooks.json" }),
   }));
+  if (workflowMatcher) {
+    await write(join(plugin, "hooks", "workflow.mjs"), await readFile(new URL("../runtime/workflow.mjs", import.meta.url)));
+    await write(join(plugin, "hooks", "hooks.json"), json({ hooks: {
+      PreToolUse: [{ matcher: "^(" + workflowMatcher + ")$", hooks: [{
+        type: "command", command: 'node "$PLUGIN_ROOT/hooks/workflow.mjs"', timeout: 5,
+      }] }],
+    } }));
+  }
   for (const { name, bytes } of contents) await write(join(plugin, "skills", name, "SKILL.md"), bytes);
-  await write(join(plugin, "axiom-policy.json"), json({ policy, instructionsDigest: digest(instructions), skills }));
+  await write(join(plugin, "axiom-policy.json"), json({
+    policy, instructionsDigest: digest(instructions), skills, ...(skills.delegate && {
+      workerFields: Object.keys(taskBriefSchema.shape),
+      workerCapabilityPattern: capabilityIdSchema.toJSONSchema().pattern,
+    }),
+  }));
   await write(join(plugin, "axiom-policy.txt"), instructions + "\n");
   return { root, version: input.version, policy, skills: contents.map(({ name }) => name), instructions };
 }

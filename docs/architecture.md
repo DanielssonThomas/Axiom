@@ -32,7 +32,7 @@ Keep skills generic and selectively load their references. Runtime skill bundles
 | `packages/bundles/` | Reproducible native release assembly. |
 | `adapters/{claude,codex,hermes}/` | Thin native integrations backed by shared contracts and logic. |
 | `skills/{context,design,verify,diagnose,delegate,knowledge}/` | Core reusable workflows and their local evaluations. |
-| `profiles/{ui-atomic,angular-nx}/` | Optional UI and Angular/Nx conventions. |
+| `profiles/ui-atomic/` | Optional framework-independent UI composition and verification. |
 | `evals/{cases,graders}/` | Shared behavioral cases and independent grading assets. |
 | `tests/<area>/` and `tests/integration/hosts/` | Contract, implementation, and actual-host verification. |
 
@@ -44,15 +44,7 @@ Use existing libraries, native packaging, framework generators, and repository t
 
 `ui-atomic` owns the responsibility and dependency rules for atoms, molecules, organisms, and templates. UI-layer dependencies point toward lower layers. Feature composition consumes the appropriate layers while preserving domain ownership.
 
-`angular-nx` extends `ui-atomic` rather than copying its rules. It adds:
-
-- Application shells for bootstrap, routing, configuration, and composition; scoped libraries for reusable behavior and UI.
-- A directory for every page and every collection, with component implementation, external template, and relevant tests colocated. For example, `pages/dashboard/dashboard.component.ts` and `pages/dashboard/dashboard.component.html` share the `dashboard` directory.
-- Named domain, API, and reusable UI models in their own owned model/schema files, even with one consumer. Existing schema-owned contracts remain derived rather than manually duplicated.
-- Appropriate public APIs, selected layer suffix conventions, and dependency restrictions within and between libraries.
-- Existing repository test tooling and framework-compatible generator options, selected from the actual installed versions.
-
-A collection is a cohesive feature composition, not automatically another atomic layer. A component directory does not require a separate build library. Private local types need not become public interfaces, and similar DTO/domain/view-model shapes do not imply a single contract.
+Keep framework, generator, and project conventions in the owning repository's instructions. Axiom uses those instructions as context for its shared engineering workflows. The default distribution contains the core and canonical skills. Optional profiles apply when explicitly selected.
 
 ## Workspace contracts
 
@@ -78,13 +70,27 @@ Run `node packages/cli/dist/index.js <command>` after `pnpm build`. The CLI reco
 - `doctor`: identify installed versions, active policy/profile sources, skill discovery, hook coverage, and unsupported capabilities.
 - `check`: run applicable deterministic checks and selected repository-native verification, with evidence for the assessed scope.
 - `benchmark`: execute versioned behavioral cases through actual host backends; the requested `--benchmark <agent>` form is an alias.
+- `benchmark-review` replays saved grading observations against the reviewed case definitions.
+- `bundle` stages the versioned native distribution. `codex install`, `update`, `disable`, and `uninstall` manage the installed native plugin and its policy activation.
 
-Both benchmark forms emit the same result with `command: "benchmark"` and the requested `agent` identifier. Every invocation emits one JSON object to stdout.
+Use the native benchmark command in the [installation guide](install.md#run-a-local-behavioral-benchmark). Doctor, check, and expert benchmark callers can pass `--request /absolute/path/to/request.mjs`. This explicit path loads executable operator configuration. Keep the module outside the evaluated agent's control and use a module you trust. The module exports the requested operation as a named export. Expert benchmark execution also requires `--allow-paid`.
+
+| Export | Inputs |
+| --- | --- |
+| `doctor` | A `DoctorRequest` with its root, catalog and native configuration snapshot. Supply observations collected for the current installed files and host session. |
+| `check` | An absolute repository root, a shared task brief, authoritative verification requirements, and an absolute `evidenceDirectory`. Supply `capabilities` and `host` when they are independently available. |
+| `benchmark` | `BenchmarkOptions` using an absolute `evidenceDirectory` in place of `store`. The trusted operator supplies the approved grader and an isolation provider that invokes the requested native adapter. Keep graders, credentials and evidence out of the agent-accessible workspace. |
+
+Both benchmark forms use the same operation, emit `command: "benchmark"`, and identify the requested `agent`. Standard native diagnostics and strict isolated runs use the same fixture staging, paired execution, graders, evidence and replay. Use `--preflight` to check the reviewed case plan and native executable before granting run authorization. A successful behavioral result can contribute to release qualification. Full qualification requires observed evidence for every mandatory installed-host requirement. Every invocation emits one JSON object to stdout.
+
+Built-in benchmark archives report `results.execution` for completion with fresh evidence and `results.behavior` for each arm’s graded result. Matched case repetitions report the observed direction and native execution duration for each arm when available. An unavailable comparison covers incomplete or ungraded attempts. The existing paired aggregate and CLI exit status continue to expose mandatory assertion failures. Installed-host qualification is assessed separately. Replay checks archive integrity and reproduces the recorded assertion outcomes, including failures.
+
+The built-in Linux Claude runner keeps the reviewed Git archive, compiled grader, evidence directory, and provider API key outside the native process. The sandbox exposes disposable workspace and profile paths, approved system executables and libraries, the selected bundle, and a Unix socket. A bridge makes the socket available on the sandbox's private loopback interface. That socket accepts only the pinned model's standard Messages requests with local tools. The broker forwards native generation settings and records provider usage when available. Use token and cost estimates for planning. Record measured usage when available and mark it unknown otherwise. Usage figures are informational in benchmark execution and release qualification.
 
 | Exit code | JSON output |
 | --- | --- |
 | `0` | Reserved for successful execution with `status: "passed"`. |
-| `1` | Unsuccessful operation. The skeleton emits `command`, `status: "not_run"`, and `reason`, plus `agent` for benchmark. |
+| `1` | Incomplete or unsuccessful operation with a canonical status and reason. Available evidence is included in the operation report. |
 | `2` | Invalid invocation. The object includes `status: "failed"` and a usage `reason`. |
 
 Unsupported capabilities produce explicit gaps. Installation alone does not establish instruction activation, successful skill triggering, or enforcement.

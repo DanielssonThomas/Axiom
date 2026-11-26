@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
-import { assembleBundles, writeBundles } from "../../../packages/bundles/src/index.js";
+import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../../packages/bundles/src/index.js";
 import { changeHermesPlugin, checkHermesEvent, hermesBundleAdapter, inspectHermesActivation } from "../../../adapters/hermes/src/index.js";
+import { createProfileWorkspace, fixtureProfile } from "../../fixtures/profile-workspace.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const workspaces: string[] = [];
@@ -38,10 +39,12 @@ function profiles() {
   return { home, profile: "alpha" };
 }
 
-function bundle(version = "0.1.0") {
-  return writeBundles(temporary(), assembleBundles(repository, {
+function bundle(version = "0.1.0", selectedProfiles: string[] = []) {
+  const source = selectedProfiles.length ? createProfileWorkspace(repository, temporary()) : repository;
+  const { catalog: { checks } } = loadBundleWorkspace(source);
+  return writeBundles(temporary(), assembleBundles(source, {
     version, sourceRevision: "fixture", policyVersion: "1",
-    selectedProfiles: [], checks: {}, skills: [{ id: "context" }, { id: "verify" }],
+    selectedProfiles, checks, skills: [{ id: "context" }, { id: "verify" }],
     adapters: [hermesBundleAdapter],
   }))[0]!;
 }
@@ -132,6 +135,46 @@ test("keeps a colliding unowned plugin and profile settings untouched", () => {
   expect(readFileSync(join(target.home, "profiles/alpha/config.yaml"), "utf8")).toBe(configuration);
 });
 
+test("requires the live request to carry the selected and inherited profile bytes", () => {
+  const target = profiles();
+  const artifact = bundle("0.1.0", [fixtureProfile]);
+  expect(changeHermesPlugin(target, { kind: "install", bundle: artifact.directory }).outcome.status).toBe("passed");
+  const folder = join(target.home, "profiles/alpha/.axiom-hermes");
+  const instance = "452872cd-ee70-4f43-a602-f3ab2d2e26fb";
+  write(join(target.home, "profiles/alpha/plugins/axiom/.axiom-install-instance"), JSON.stringify(instance));
+  const sections = [{ id: "axiom.policy-000", digest: "sha256:" + "a".repeat(64) }];
+  const selected = [fixtureProfile, "ui-atomic"].map((id) => ({
+    id, digest: artifact.manifest.files.find(({ path }) => path === `profiles/${id}/PROFILE.md`)!.digest,
+  }));
+  const identity = { digest: artifact.manifest.digest, instance, sections };
+  write(join(folder, "registered.json"), JSON.stringify({ stage: "registered", ...identity }));
+  function observe(session: string, profiles: { id: string; digest: string }[]) {
+    write(join(folder, `loaded-${session}.json`), JSON.stringify({
+      stage: "loaded", mechanism: "llm_request", session, profiles, ...identity,
+    }));
+    return inspectHermesActivation(target, session);
+  }
+
+  expect(observe("unread", [])).toMatchObject({
+    coreLoaded: { status: "passed" },
+    loaded: { status: "blocked" },
+    profileLoads: selected.map(({ id }) => ({ id, outcome: { status: "not_run" } })),
+  });
+  const incomplete = observe("stale", [{ id: fixtureProfile, digest: "sha256:" + "b".repeat(64) }]);
+  expect(incomplete).toMatchObject({
+    coreLoaded: { status: "passed" }, loaded: { status: "blocked" },
+    profileLoads: [
+      { id: fixtureProfile, outcome: { status: "blocked" } },
+      { id: "ui-atomic", outcome: { status: "not_run" } },
+    ],
+  });
+  expect(observe("retrieved", selected)).toMatchObject({
+    coreLoaded: { status: "passed" }, loaded: { status: "passed" },
+    profileLoads: selected.map(({ id }) => ({ id, outcome: { status: "passed" } })),
+  });
+  expect(observe("retrieved", [selected[0]!]).loaded.status).toBe("blocked");
+});
+
 test("installs into a newly created named profile before its first configuration write", () => {
   const target = profiles();
   const direct = join(target.home, "profiles/alpha/config.yaml");
@@ -152,7 +195,7 @@ test("installed check runtime is self-contained and blocks a session without loa
   ], { encoding: "utf8", cwd: archive, timeout: 5_000 });
   expect(nativeCheck.status, nativeCheck.stderr).toBe(0);
   expect(JSON.parse(nativeCheck.stdout)).toEqual({
-    status: "blocked", reason: "Required Axiom loading is absent in the current Hermes session.",
+    status: "blocked", reason: "Required Axiom core loading is absent in the current Hermes session.",
   });
 });
 

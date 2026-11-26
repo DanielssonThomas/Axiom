@@ -5,8 +5,8 @@ import type {
 import type { EvidenceStore } from "@axiom/evidence";
 
 export interface BenchmarkRuntime {
-  /** Fixture runtimes use trusted test doubles. Native runtimes require enforced process isolation. */
-  readonly kind: "fixture" | "isolated";
+  /** Native diagnostics use a real host. Isolated runtimes enforce process isolation. */
+  readonly kind: "fixture" | "native" | "isolated";
   /** Workspace path as mounted and visible to the backend. */
   readonly workspace: string;
   readonly backend: BenchmarkBackend;
@@ -14,7 +14,7 @@ export interface BenchmarkRuntime {
   close(signal: AbortSignal): Promise<void>;
 }
 
-/** The provider must expose only the staged workspace and explicitly approved runtime resources. */
+/** An isolated runtime must expose only the staged workspace and explicitly approved resources. */
 export type OpenBenchmarkRuntime = (stagedWorkspace: string, signal: AbortSignal) => Promise<BenchmarkRuntime>;
 
 export interface BenchmarkObservation {
