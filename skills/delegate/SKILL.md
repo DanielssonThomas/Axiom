@@ -20,7 +20,9 @@ Use when independent work can proceed in a separate worker or worktree. Follow A
 
 Use the host's structured Axiom task brief when present. Include the worker's own `id`, `parentId`, `objective`, `ownedPaths`, and effective `policy` with `version`, `digest`, and `profiles`. Carry `criteria` with each `id`, `description`, and `required` value, the `requiredCapabilities`, and the execution `limits` with `timeoutMs`, `maxAttempts`, and `maxConcurrency`.
 
-When the verifier can observe worker reads and the native handoff body is opaque, write the full JSON brief to a temporary workspace file and record its SHA-256 before delegating. Send the work objective, path, and digest through the native handoff. The linked worker must read that exact file and check its digest before editing. On Linux, separate `sha256sum -- path` and `cat -- path` commands expose the digest and read to native command observers. Keep the reference available until the worker completes and remove the temporary file before verifying the delivered source. If native delivery is unobservable on the selected surface, record the missing evidence.
+For Codex V2 inbox delivery on Linux, use a digest-bound workspace reference. Write the full JSON brief to a temporary file under `.axiom/`, such as `.axiom/worker-brief.json`. Run `sha256sum -- .axiom/worker-brief.json` as a separate tool call before delegating. Send the work objective, path, and digest through the native handoff. The linked worker must read the exact file with a separate `cat -- .axiom/worker-brief.json` call and check its digest before editing. Keep the file until the worker completes and remove it before the parent verifies the delivered source. Run the parent verification command in its own tool call after inspecting the delivered changes.
+
+Use this method on other opaque native surfaces when exact worker reads can be independently observed. Record the missing evidence when neither direct delivery nor a linked read can be verified.
 
 ## Expected evidence
 

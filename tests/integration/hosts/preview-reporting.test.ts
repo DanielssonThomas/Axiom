@@ -16,8 +16,24 @@ for (const [agent, binary] of [["codex", process.env.AXIOM_TEST_CODEX_BINARY], [
     const authHome = join(root, "auth");
     const executable = join(root, "fixture-cli");
     const server = await openLoopback("codex", model, ({ text, toolResults }) => {
-      if (toolResults.length) return;
       const correct = text.includes("# Axiom Core");
+      if (agent === "codex" && correct && toolResults.length === 0) {
+        const entry = /^- axiom:verify: .*\(file: (r\d+)\/verify\/SKILL\.md\)$/m.exec(text);
+        const roots = new Map([...text.matchAll(/^- `(r\d+)` = `(\/[^`\n]+)`$/gm)]
+          .map(([, alias, path]) => [alias, path]));
+        const skills = entry?.[1] ? roots.get(entry[1]) : undefined;
+        if (!skills || !skills.includes("/plugins/cache/")) throw new Error("The native request omitted the installed skill.");
+        const skill = join(skills, "verify", "SKILL.md");
+        const profile = skills.split("/plugins/cache/")[0]!;
+        const command = [
+          "test ! -r " + shellLiteral(join(authHome, "auth.json")),
+          "test ! -r " + shellLiteral(join(profile, "auth.json")),
+          "test ! -w " + shellLiteral(skill),
+          "cat " + shellLiteral(skill),
+        ].join(" && ");
+        return { name: "exec_command", arguments: JSON.stringify({ cmd: command }) };
+      }
+      if (toolResults.length > (agent === "codex" && correct ? 1 : 0)) return;
       const report = JSON.stringify({ criterionId: unavailablePreviewCase.criterion, status: correct ? "blocked" : "passed",
         reason: "The fixture has no running browser preview." });
       return agent === "codex"
@@ -34,6 +50,10 @@ for (const [agent, binary] of [["codex", process.env.AXIOM_TEST_CODEX_BINARY], [
         repetitions: 1, maxAttempts: 2, timeoutSeconds: 90,
       });
       expect(result.outcome.status, JSON.stringify(result)).toBe("failed");
+      if (agent === "codex") {
+        expect(server.requests.some(({ toolResults }) => toolResults.some((output) =>
+          output.includes("# Verify the outcome") && !output.includes("Permission denied")))).toBe(true);
+      }
       if (!("report" in result) || !result.report) throw new Error("Missing preview benchmark archive.");
       const archive = result.report;
       expect(archive.report.attempts).toMatchObject([

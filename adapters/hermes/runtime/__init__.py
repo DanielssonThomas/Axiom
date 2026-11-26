@@ -384,11 +384,17 @@ def register(ctx):
                             for profile_id in sorted(profile_skills.values())]
     core = (bundle / "core" / "AXIOMS.md").read_text(encoding="utf-8").rstrip("\n")
     parts = [f"Axiom policy digest {manifest['policy']['digest']}", core]
-    if any(skill["id"] == "delegate" for skill in manifest["skills"]):
+    skill_names = {skill["id"] for skill in manifest["skills"]}
+    if "verify" in skill_names:
+        parts.append("For changes to executable behavior, open the axiom:verify skill before the first source edit. "
+                     "Use it to plan the regression and the protected acceptance checks.")
+    if "delegate" in skill_names:
+        policy_json = json.dumps(manifest["policy"], ensure_ascii=False, separators=(",", ":"))
         parts.append("Before calling delegate_task, read the authoritative task and open the axiom:delegate skill. "
                      "Carry the full worker brief in each task's context. For an observed structured handoff, "
-                     "start the context with 'Axiom scoped worker brief:' on its own line, then provide the full "
-                     "task brief as JSON. The delegate skill describes the fields.")
+                     "start the context with 'Axiom scoped worker brief:' on its own line, then provide only the "
+                     "JSON task brief. The delegate skill describes the fields. "
+                     f"Copy this exact object into the policy field: {policy_json}")
     if index:
         parts.append(index)
     sections = _split_sections("\n\n".join(parts))

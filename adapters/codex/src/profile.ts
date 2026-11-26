@@ -7,6 +7,12 @@ import { array, nativeJson, nativeVersion, object, runCodex, type CodexProfile }
 
 export type CodexLifecycle = "install" | "update" | "disable" | "uninstall";
 
+/** The cache subtree exposed by the pinned native plugin skill inventory. */
+export function codexInstalledSkillsPath(home: string, version: string): string {
+  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) throw new Error("Expected a native plugin version.");
+  return join(home, "plugins", "cache", marketplace, "axiom", version, "skills");
+}
+
 export interface NativeCodexObservation {
   observedVersion?: string;
   discovered: boolean;

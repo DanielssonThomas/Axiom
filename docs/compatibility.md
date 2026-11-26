@@ -321,6 +321,16 @@ The first proposed live slice is one Hermes session with GPT-6 Luna and the exis
 
 The pinned install, update, rollback, disable and uninstall paths, fresh-session policy delivery, shared checks, Codex and Hermes reuse and verification reporting, and verified native structured clarification surfaces are technically ready for experiments within their observed combinations. Axiom’s Hermes handoff cue and progressive profile delivery have scripted native evidence. Production delegation, general resume and compaction claims, and formal v1 qualification remain open.
 
+### Signed-in observation and replacement plan
+
+The release scope requires Codex and Hermes. Claude Code remains unqualified. The owner approved digest-bound delivery by reference for the pinned Codex V2 worker surface. The worker must belong to the observed parent and read the parent's exact, pre-launch brief bytes before editing. The parent then inspects and tests the delivered source. This verifies the worker's lookup on the tested surface. Native inbox plaintext remains unavailable for independent inspection.
+
+The first signed-in receipt trials at `6cd7adc` exposed incomplete RED runs on both hosts. They also established ordinary semantic clarification for Hermes using `clarify-material-decision`. The native Hermes worker completed but its original brief lacked a complete observable policy contract. At `c492c81`, both hosts again omitted the protected acceptance check in RED. Codex's isolated tool environment denied access to the discovered installed skill files. Hermes used a structured handoff with an invalid policy identity. Keep these records alongside any replacement observations.
+
+The pinned Codex tool profile grants read-only access to the installed Axiom skill directory. Preflight checks native access to the skill files and keeps the account store and verifier archive outside the workspace tool boundary. The Hermes registration supplies the exact effective policy object alongside the handoff instructions. The native loopback cases cover both paths. The regression observations bind complete pre- and post-command test output to independently captured workspace source identities.
+
+Run one fresh writable ordinary-session trial for each affected settled-work and delegation criterion on Codex and Hermes after successful preflight. Use the unchanged case prompts, the installed candidate, GPT-6 Luna, and a 120-second limit. Allow one session at a time per host. The handoff case requires one linked worker with a 30-second limit. The verifier retains failures, checks the parent result against the final delivered source, and records all four outcomes individually.
+
 ### Issue #19 criterion status
 
 The pinned Linux distribution tests exercise rollback from a newer fixture artifact to the reviewed earlier artifact using the native Claude marketplace, Codex lifecycle, and Hermes Git install routes. They check restored artifact or runtime identity and preservation of unrelated settings. Release-specific rollback remains part of [#20](https://github.com/DanielssonThomas/Axiom/issues/20).

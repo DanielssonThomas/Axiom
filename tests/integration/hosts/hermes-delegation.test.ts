@@ -142,6 +142,9 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             expect(launch?.systemMessages.some((message) => message.includes(
               "start the context with 'Axiom scoped worker brief:' on its own line",
             ))).toBe(true);
+            expect(launch?.systemMessages.some((message) => message.includes(
+              "Copy this exact object into the policy field: " + JSON.stringify(artifact.manifest.policy),
+            ))).toBe(true);
           }
           expect(childRequests[0]?.text.includes(observedContext)).toBe(includeBrief);
           if (trial === "pretty-printed-brief") {

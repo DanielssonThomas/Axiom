@@ -8,7 +8,7 @@ import { backendRequestSchema, backendResultSchema, usageSchema, type BenchmarkB
 import { supportedCodexHost } from "./activation.js";
 import { digest, type CodexBundle } from "./bundle.js";
 import { runCodexPlan, type CodexPlanObserver } from "./clarification.js";
-import { configureCodexProfile, observeCodexProfile } from "./profile.js";
+import { codexInstalledSkillsPath, configureCodexProfile, observeCodexProfile } from "./profile.js";
 import { array, nativeJson, nativeVersion, object, runCodex, type CodexProfile } from "./process.js";
 
 type NormalizedAction =
@@ -161,7 +161,9 @@ export async function resolveCodexAccountProgram(program: string): Promise<strin
   throw new Error("The installed Codex npm package lacks its platform executable.");
 }
 
-async function prepareNativeAuth(profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal, preview: boolean, plan: boolean) {
+async function prepareNativeAuth(
+  profile: CodexProfile, authHome: string, archive: string, signal: AbortSignal, preview: boolean, plan: boolean, bundleVersion?: string,
+) {
   const source = await realpath(authHome);
   const credential = join(source, "auth.json");
   if (inside(profile.workspace, source) || inside(source, profile.workspace) ||
@@ -184,6 +186,7 @@ async function prepareNativeAuth(profile: CodexProfile, authHome: string, archiv
     '":minimal" = "read"',
     `":workspace_roots" = "${plan ? "read" : "write"}"`,
     `${JSON.stringify(profile.program)} = "read"`,
+    ...(bundleVersion ? [`${JSON.stringify(codexInstalledSkillsPath(profile.home, bundleVersion))} = "read"`] : []),
     ...(plan ? ['"/usr/bin/cat" = "read"', '"/usr/bin/sed" = "read"', '"/usr/bin/ls" = "read"', '"/usr/bin/readlink" = "read"'] : []),
     `[permissions.${standardPermissions}.network]`,
     "enabled = false",
@@ -261,17 +264,17 @@ export function createCodexBackend(options: CodexBackendOptions): BenchmarkBacke
       const native = await nativeVersion(profile, signal);
       if (native !== request.host.version) return result({ status: "blocked", reason: "Installed Codex does not match the requested version." });
       host = { ...request.host, version: native };
+      const bundle = request.mode === "with_axiom" ? options.bundle : undefined;
+      if (request.mode === "with_axiom" && (!bundle || bundle.policy.digest !== request.policy.digest)) {
+        return result({ status: "blocked", reason: "The requested policy digest does not match an available Codex bundle." });
+      }
       if (authHome) {
         // Bubblewrap creates this mount on the host. Own its empty directory before Codex starts any sandbox.
         removeGitMount = await stageGitMountPoint(workspace);
-        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal, preview, plan);
+        const unavailable = await prepareNativeAuth(profile, authHome, artifactsRoot, signal, preview, plan, bundle?.version);
         if (unavailable) return result({ status: "blocked", reason: unavailable });
       }
-      if (request.mode === "with_axiom") {
-        const bundle = options.bundle;
-        if (!bundle || bundle.policy.digest !== request.policy.digest) {
-          return result({ status: "blocked", reason: "The requested policy digest does not match an available Codex bundle." });
-        }
+      if (bundle) {
         await configureCodexProfile(profile, "install", bundle, signal);
         const status = await observeCodexProfile(profile, signal);
         if (!status.discovered || !status.selected
