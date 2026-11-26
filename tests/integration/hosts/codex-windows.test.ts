@@ -37,7 +37,7 @@ test.runIf(executable && process.platform === "win32")("pinned Windows Codex loa
     expect(await nativeVersion(profile, signal)).toBe(supportedVersion);
     const { catalog } = loadBundleWorkspace(source);
     const first = await buildCodexBundle({ source, destination: join(root, "first"), version: "0.1.0", catalog, profiles: [] });
-    const later = await buildCodexBundle({ source, destination: join(root, "later"), version: "0.1.1", catalog, profiles: ["angular-nx"] });
+    const later = await buildCodexBundle({ source, destination: join(root, "later"), version: "0.1.1", catalog, profiles: ["ui-atomic"] });
     await expect(configureCodexProfile(profile, "install", first, signal)).rejects.toThrow("version or platform is unsupported");
     const lifecycle = windowsCodexFixture(profile, root, signal);
     const observe = async () => {

@@ -8,7 +8,9 @@ import {
   assessClaudeActivation, buildClaudeBundle, configureClaudeProfile, createClaudeBackend, executeClaudeSession, type ClaudeBundleInput,
   observeClaudeInstallation, supportedVersion, validateClaudeBundle, workerBriefEnvironment,
 } from "../../../adapters/claude/src/index.js";
+import { loadBundleWorkspace } from "../../../packages/bundles/src/index.js";
 import { EvidenceStore } from "../../../packages/evidence/src/index.js";
+import { createProfileWorkspace, fixtureProfile, fixtureProfileHeading } from "../../fixtures/profile-workspace.js";
 import { openLoopback } from "../../integration/hosts/loopback.js";
 
 const executable = process.env.AXIOM_TEST_CLAUDE_BINARY;
@@ -38,7 +40,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
       sawDigest = body.includes("Axiom policy digest: sha256:");
       sawSkills = body.includes("axiom:context");
       sawInheritedProfiles = body.includes("# Axiom Core")
-        && body.includes("# Atomic UI profile") && body.includes("# Angular and Nx profile");
+        && body.includes("# Atomic UI profile") && body.includes(fixtureProfileHeading);
       sawWorkerBrief ||= body.includes("Axiom scoped worker brief:") && body.includes("worker-native");
       sawWorkerProfiles ||= body.includes("Axiom scoped worker brief:")
         && body.includes("worker-profiled") && sawInheritedProfiles;
@@ -73,12 +75,11 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     if (!address || typeof address === "string") throw new Error("No local fixture provider address.");
     const environment = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`, ANTHROPIC_AUTH_TOKEN: "fixture-no-credentials" };
     const profile = { program: executable!, home, userHome, workspace, environment };
+    const source = createProfileWorkspace(process.cwd(), join(root, "source"));
+    const { catalog: { checks } } = loadBundleWorkspace(source);
     const makeBundle = (version: string, selectedProfiles: ClaudeBundleInput["selectedProfiles"] = []) => buildClaudeBundle({
-      repository: process.cwd(), destination: join(root, "bundles"), sourceRevision: "native-fixture",
-      policyVersion: "1", selectedProfiles, version,
-      checks: Object.fromEntries([
-        "ui-atomic.composition", "ui-atomic.reuse", "ui-atomic.verification", "angular-nx.structure", "angular-nx.native-tooling",
-      ].map((id) => [id, { kind: "mechanical" }])),
+      repository: source, destination: join(root, "bundles"), sourceRevision: "native-fixture",
+      policyVersion: "1", selectedProfiles, version, checks,
       skills: ["context", "delegate", "design", "diagnose", "knowledge", "verify"].map((id) => ({ id })),
     });
     const first = await makeBundle("1.0.0");
@@ -162,7 +163,7 @@ test.runIf(Boolean(executable))("validates and exercises the installed Claude pl
     await expect(configureClaudeProfile(foreign, "user", "uninstall")).rejects.toThrow(/different source/i);
     expect((await observeClaudeInstallation(foreign, "user")).selected).toBe(true);
 
-    const profiles = await makeBundle("1.0.2", ["angular-nx"]);
+    const profiles = await makeBundle("1.0.2", [fixtureProfile]);
     await configureClaudeProfile(profile, "local", "install", profiles);
     const profiled = await executeClaudeSession(profile, options);
     expect(assessClaudeActivation(profiles, host, profiled.observation).outcome.status).toBe("passed");
@@ -200,10 +201,7 @@ test.runIf(Boolean(executable) && process.platform === "linux")("loads a native 
     };
     const bundle = await buildClaudeBundle({
       repository: process.cwd(), destination: join(root, "bundle"), sourceRevision: "native-subscription-fixture",
-      policyVersion: "1", selectedProfiles: [], version: "0.1.0",
-      checks: Object.fromEntries([
-        "ui-atomic.composition", "ui-atomic.reuse", "ui-atomic.verification", "angular-nx.structure", "angular-nx.native-tooling",
-      ].map((id) => [id, { kind: "mechanical" }])),
+      policyVersion: "1", selectedProfiles: [], version: "0.1.0", checks: {},
       skills: ["context", "delegate", "design", "diagnose", "knowledge", "verify"].map((id) => ({ id })),
     });
     const backend = createClaudeBackend({ program: executable!, authHome: home, userHome, environment, artifacts, bundle });

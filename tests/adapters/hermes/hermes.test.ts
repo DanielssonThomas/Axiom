@@ -4,10 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { profileDefinitionSchema } from "@axiom/contracts";
 import { afterEach, expect, test } from "vitest";
-import { assembleBundles, writeBundles } from "../../../packages/bundles/src/index.js";
+import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../../packages/bundles/src/index.js";
 import { changeHermesPlugin, checkHermesEvent, hermesBundleAdapter, inspectHermesActivation } from "../../../adapters/hermes/src/index.js";
+import { createProfileWorkspace, fixtureProfile } from "../../fixtures/profile-workspace.js";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const workspaces: string[] = [];
@@ -40,11 +40,9 @@ function profiles() {
 }
 
 function bundle(version = "0.1.0", selectedProfiles: string[] = []) {
-  const checks = selectedProfiles.length ? Object.fromEntries(["angular-nx", "ui-atomic"].flatMap((id) =>
-    profileDefinitionSchema.parse(JSON.parse(readFileSync(join(repository, "profiles", id, "profile.json"), "utf8")))
-      .checks.map((check) => [check.id, { kind: "mechanical" as const }]),
-  )) : {};
-  return writeBundles(temporary(), assembleBundles(repository, {
+  const source = selectedProfiles.length ? createProfileWorkspace(repository, temporary()) : repository;
+  const { catalog: { checks } } = loadBundleWorkspace(source);
+  return writeBundles(temporary(), assembleBundles(source, {
     version, sourceRevision: "fixture", policyVersion: "1",
     selectedProfiles, checks, skills: [{ id: "context" }, { id: "verify" }],
     adapters: [hermesBundleAdapter],
@@ -139,13 +137,13 @@ test("keeps a colliding unowned plugin and profile settings untouched", () => {
 
 test("requires the live request to carry the selected and inherited profile bytes", () => {
   const target = profiles();
-  const artifact = bundle("0.1.0", ["angular-nx"]);
+  const artifact = bundle("0.1.0", [fixtureProfile]);
   expect(changeHermesPlugin(target, { kind: "install", bundle: artifact.directory }).outcome.status).toBe("passed");
   const folder = join(target.home, "profiles/alpha/.axiom-hermes");
   const instance = "452872cd-ee70-4f43-a602-f3ab2d2e26fb";
   write(join(target.home, "profiles/alpha/plugins/axiom/.axiom-install-instance"), JSON.stringify(instance));
   const sections = [{ id: "axiom.policy-000", digest: "sha256:" + "a".repeat(64) }];
-  const selected = ["angular-nx", "ui-atomic"].map((id) => ({
+  const selected = [fixtureProfile, "ui-atomic"].map((id) => ({
     id, digest: artifact.manifest.files.find(({ path }) => path === `profiles/${id}/PROFILE.md`)!.digest,
   }));
   const identity = { digest: artifact.manifest.digest, instance, sections };
@@ -162,11 +160,11 @@ test("requires the live request to carry the selected and inherited profile byte
     loaded: { status: "blocked" },
     profileLoads: selected.map(({ id }) => ({ id, outcome: { status: "not_run" } })),
   });
-  const incomplete = observe("stale", [{ id: "angular-nx", digest: "sha256:" + "b".repeat(64) }]);
+  const incomplete = observe("stale", [{ id: fixtureProfile, digest: "sha256:" + "b".repeat(64) }]);
   expect(incomplete).toMatchObject({
     coreLoaded: { status: "passed" }, loaded: { status: "blocked" },
     profileLoads: [
-      { id: "angular-nx", outcome: { status: "blocked" } },
+      { id: fixtureProfile, outcome: { status: "blocked" } },
       { id: "ui-atomic", outcome: { status: "not_run" } },
     ],
   });

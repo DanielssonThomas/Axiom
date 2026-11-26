@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
-import { profileDefinitionSchema, type EvidenceOutcome, type HostIdentity, type PolicyIdentity } from "@axiom/contracts";
+import type { EvidenceOutcome, HostIdentity, PolicyIdentity } from "@axiom/contracts";
 import { expect, test } from "vitest";
 import * as claude from "../../../adapters/claude/src/index.js";
 import { nativeJson } from "../../../adapters/claude/src/process.js";
@@ -11,9 +11,9 @@ import * as codex from "../../../adapters/codex/src/index.js";
 import { runCodex } from "../../../adapters/codex/src/process.js";
 import * as hermes from "../../../adapters/hermes/src/index.js";
 import { runHermes } from "../../../adapters/hermes/src/process.js";
-import { assembleBundles, writeBundles } from "../../../packages/bundles/src/index.js";
+import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../../packages/bundles/src/index.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
-import { inspectAngularWorkspace } from "../../../profiles/angular-nx/checks.js";
+import { inspectComposition } from "../../../profiles/ui-atomic/checks.js";
 import { assessInstalledHost, transportRequirements } from "./qualification.js";
 import { openLoopback, ordinaryPrompt, type NativeHost, type NativeLoopback } from "./loopback.js";
 
@@ -54,15 +54,6 @@ interface InstalledFixture {
   brokenControl(): Promise<EvidenceOutcome>;
 }
 
-async function fixtureCatalog(source: string) {
-  const read = async (path: string) => ({ path, text: await readFile(join(source, path), "utf8") });
-  const core = { ...await read("core/AXIOMS.md"), version: "1" };
-  const profiles = await Promise.all(["ui-atomic", "angular-nx"].map((id) => read(`profiles/${id}/profile.json`)));
-  const checks = Object.fromEntries(profiles.flatMap(({ text }) => profileDefinitionSchema.parse(JSON.parse(text)).checks
-    .map(({ id }) => [id, { kind: "mechanical" as const }])));
-  return { core, profiles, checks };
-}
-
 async function claudeFixture(input: Fixture): Promise<InstalledFixture> {
   const { root, workspace, source, revision, executable, host, loopback, signal } = input;
   const profile = {
@@ -77,13 +68,13 @@ async function claudeFixture(input: Fixture): Promise<InstalledFixture> {
   const setting = { env: { DISPOSABLE_FIXTURE_VALUE: "preserve" } };
   await Promise.all([writeFile(settings, JSON.stringify(setting)), writeFile(local, JSON.stringify(setting)),
     writeFile(user, userInstruction), writeFile(project, projectInstruction)]);
-  const { checks } = await fixtureCatalog(source);
+  const { checks } = loadBundleWorkspace(source).catalog;
   const build = (version: string, selectedProfiles: readonly string[]) => claude.buildClaudeBundle({
     repository: source, destination: join(root, "bundles"), sourceRevision: revision, version, policyVersion: "1",
     selectedProfiles, checks, skills: skills.map((id) => ({ id })),
   });
   const first = await build("0.1.0", []);
-  const next = await build("0.1.1", ["angular-nx"]);
+  const next = await build("0.1.1", ["ui-atomic"]);
   let chosen = first;
   const session = async (enabled: boolean) => {
     const trace = await claude.executeClaudeSession(profile, { model: host.model, prompt: ordinaryPrompt, signal });
@@ -162,12 +153,12 @@ async function codexFixture(input: Fixture): Promise<InstalledFixture> {
     "request_max_retries = 0", "stream_max_retries = 0", "",
   ].join("\n");
   await Promise.all([writeFile(configuration, config), writeFile(user, userInstruction), writeFile(project, projectInstruction)]);
-  const catalog = await fixtureCatalog(source);
+  const catalog = loadBundleWorkspace(source).catalog;
   const build = (version: string, profiles: readonly string[]) => codex.buildCodexBundle({
     source, destination: join(root, "bundles", version), version, catalog, profiles,
   });
   const first = await build("0.1.0", []);
-  const next = await build("0.1.1", ["angular-nx"]);
+  const next = await build("0.1.1", ["ui-atomic"]);
   let chosen = first;
   const session = async () => {
     const response = await runCodex(profile, [
@@ -233,7 +224,7 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture & { profi
   const configuration = join(selected, "config.yaml");
   await Promise.all([writeFile(user, userInstruction), writeFile(project, projectInstruction),
     writeFile(configuration, "qualification_custom_setting: preserve\n"), writeFile(join(workspace, "fixture.txt"), "Fixture.\n")]);
-  const { checks } = await fixtureCatalog(source);
+  const { checks } = loadBundleWorkspace(source).catalog;
   const build = (version: string, selectedProfiles: readonly string[] = []) => writeBundles(join(root, "bundles"), assembleBundles(source, {
     version, sourceRevision: revision, policyVersion: "1", selectedProfiles, checks, skills: skills.map((id) => ({ id })),
     adapters: [hermes.hermesBundleAdapter],
@@ -295,63 +286,35 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture & { profi
       }
     },
     async profileDisclosure() {
-      const profiled = build("0.1.2", ["angular-nx"]);
+      const profiled = build("0.1.2", ["ui-atomic"]);
       expect(hermes.changeHermesPlugin(target, { kind: "install", bundle: profiled.directory }).outcome).toEqual(passed);
       try {
-        const prompt = "Fix the disposable catalog page to follow the Angular/Nx project's conventions.";
-        const projectRoot = "libs/catalog/src";
-        const publicApi = `${projectRoot}/index.ts`;
-        const page = `${projectRoot}/pages/catalog/catalog.component`;
-        const component = `${page}.ts`;
-        const template = `${page}.html`;
-        const pageSource = (metadata: string) =>
-          `import { Component } from "@angular/core";\n@Component({ ${metadata} })\nexport class CatalogComponent {}\n`;
-        const original = pageSource('template: "<p>Catalog</p>"');
-        const corrected = pageSource('templateUrl: "./catalog.component.html"');
-        const files = { [publicApi]: "export {};\n", [component]: original, [template]: "<p>Catalog</p>\n" };
-        for (const [path, content] of Object.entries(files)) {
-          const full = join(workspace, path);
-          await mkdir(join(full, ".."), { recursive: true });
-          await writeFile(full, content);
-        }
-        const inspect = () => inspectAngularWorkspace({
-          files, projects: [{ name: "catalog", kind: "library", sourceRoot: projectRoot, publicApi }], paths: {}, models: [],
+        const prompt = "Repair the catalog filter component dependency in the disposable UI graph.";
+        const path = join(workspace, "ui-graph.json");
+        const atom = { id: "input", level: "atom", owner: "catalog", visibility: "public", dependencies: [] } as const;
+        const filter = { id: "filter", level: "molecule", owner: "catalog", visibility: "owner", dependencies: ["input"] } as const;
+        const original = [{ ...atom, dependencies: ["filter"] }, filter];
+        const corrected = [atom, filter];
+        expect(inspectComposition(original)).toContainEqual({
+          code: "non-downward-dependency", component: "input", dependency: "filter",
         });
-        expect(inspect()).toContainEqual(expect.objectContaining({ code: "split-component", path: component }));
-
-        const profiles = await Promise.all(["angular-nx", "ui-atomic"].map(async (id) => ({
-          id, name: `axiom:profile-${id}`, text: await readFile(join(source, "profiles", id, "PROFILE.md"), "utf8"),
-        })));
-        const view = (name: string) => ({ name: "skill_view", arguments: JSON.stringify({ name, file_path: "PROFILE.md" }) });
+        await writeFile(path, JSON.stringify(original));
+        const id = "ui-atomic";
+        const name = `axiom:profile-${id}`;
+        const text = await readFile(join(source, "profiles", id, "PROFILE.md"), "utf8");
         loopback.requests.length = 0;
-        let observedProfiles: string[] = [];
         loopback.respondWithHermesTool(async () => {
           loopback.respondWithHermesTool(async () => {
-            loopback.respondWithHermesTool(async () => {
-              // Model behavior is scripted here. Send the native write only after both canonical
-              // tool results reached the provider. The independent structural check runs below.
-              const results = loopback.requests.at(-1)!.toolResults.map((raw) => JSON.parse(raw));
-              observedProfiles = profiles.filter(({ name, text }) => results.some((result) =>
-                result?.success === true && result.name === name && result.file === "PROFILE.md" && result.content === text,
-              )).map(({ id }) => id);
-              // Hermes requires a fresh read before it will overwrite an existing file.
-              const path = join(workspace, component);
-              loopback.respondWithHermesTool(async () => ({
-                name: "write_file",
-                arguments: JSON.stringify({ path, content: observedProfiles.length === profiles.length ? corrected : original }),
-              }));
-              return { name: "read_file", arguments: JSON.stringify({ path }) };
-            });
-            return view(profiles[1]!.name);
+            const results = loopback.requests.at(-1)!.toolResults.map((raw) => JSON.parse(raw));
+            expect(results).toContainEqual(expect.objectContaining({ success: true, name, file: "PROFILE.md", content: text }));
+            loopback.respondWithHermesTool(async () => ({
+              name: "write_file", arguments: JSON.stringify({ path, content: JSON.stringify(corrected) }),
+            }));
+            return { name: "read_file", arguments: JSON.stringify({ path }) };
           });
-          return view(profiles[0]!.name);
+          return { name: "skill_view", arguments: JSON.stringify({ name, file_path: "PROFILE.md" }) };
         });
         const result = await runSession(true, profiled.manifest.policy, prompt, 35_000);
-        expect(observedProfiles, JSON.stringify({
-          outcome: result.outcome,
-          nativeToolResults: loopback.requests.map(({ toolResults }) => toolResults
-            .map((raw) => { const { name, file, success, error } = JSON.parse(raw); return { name, file, success, error }; })),
-        })).toEqual(["angular-nx", "ui-atomic"]);
         expect(result.outcome).toEqual(passed);
         expect(result.host).toEqual(host);
         const firstRequest = loopback.requests[0]!.text;
@@ -362,18 +325,15 @@ async function hermesFixture(input: Fixture): Promise<InstalledFixture & { profi
         expect(frames).toContain(core);
         expect(frames).toContain(profiled.manifest.policy.digest);
         expect(firstRequest).toContain(prompt);
-        for (const { name, text } of profiles) {
-          expect(frames).toContain(name);
-          expect(frames).not.toContain(text.trimEnd());
-        }
+        expect(frames).toContain(name);
+        expect(frames).not.toContain(text.trimEnd());
         const { session } = JSON.parse(await readFile(join(archive, result.artifacts[0]!.location), "utf8"));
         expect(hermes.inspectHermesActivation(target, session)).toMatchObject({
-          coreLoaded: passed, loaded: passed, profileLoads: profiles.map(({ id }) => ({ id, outcome: passed })),
+          coreLoaded: passed, loaded: passed, profileLoads: [{ id, outcome: passed }],
         });
-        files[component] = await readFile(join(workspace, component), "utf8");
-        files[template] = await readFile(join(workspace, template), "utf8");
-        expect(files[component]).toBe(corrected);
-        expect(inspect()).toEqual([]);
+        const graph = JSON.parse(await readFile(path, "utf8"));
+        expect(graph).toEqual(corrected);
+        expect(inspectComposition(graph)).toEqual([]);
         return result.outcome;
       } finally {
         expect(hermes.changeHermesPlugin(target, { kind: "uninstall" }).outcome).toEqual(passed);
@@ -422,7 +382,6 @@ test.concurrent.each(rows)("$agent installed artifact and ordinary-session matri
         expect(request.text).toContain("# Axiom Core");
         if (policy.profiles.length > 0) {
           expect(request.text).toContain("# Atomic UI profile");
-          expect(request.text).toContain("# Angular and Nx profile");
         }
         for (const skill of skills) expect(request.text).toContain(`axiom:${skill}`);
       } else {
@@ -460,7 +419,7 @@ test.concurrent.each(rows)("$agent installed artifact and ordinary-session matri
 }, 125_000);
 
 test.runIf(process.env.AXIOM_HERMES_CLI && process.platform === "linux")(
-  "Hermes retrieves and exercises the selected Angular/Nx and inherited atomic UI profile",
+  "Hermes retrieves and exercises the selected framework-independent UI profile",
   async () => {
     const row = rows.find(({ agent }) => agent === "hermes")!;
     const source = process.cwd();

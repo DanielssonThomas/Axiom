@@ -11,6 +11,7 @@ import {
 import { openHermesGateway, runHermes } from "../../../adapters/hermes/src/process.js";
 import { assembleBundles, loadBundleWorkspace, writeBundles } from "../../../packages/bundles/src/index.js";
 import { snapshotSource } from "../../../packages/evidence/src/index.js";
+import { createProfileWorkspace, fixtureProfile } from "../../fixtures/profile-workspace.js";
 import { openLoopback } from "./loopback.js";
 
 const executable = process.env.AXIOM_HERMES_CLI;
@@ -29,17 +30,18 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       const target = { home, profile: "qualification" };
       const source = await snapshotSource({ root: process.cwd() });
       const profiled = scope === "selected profiles";
-      const { catalog } = loadBundleWorkspace(process.cwd());
-      const [artifact] = writeBundles(join(root, "bundles"), assembleBundles(process.cwd(), {
+      const repository = profiled ? createProfileWorkspace(process.cwd(), join(root, "source")) : process.cwd();
+      const { catalog } = loadBundleWorkspace(repository);
+      const [artifact] = writeBundles(join(root, "bundles"), assembleBundles(repository, {
         version: "0.1.0", sourceRevision: source.revision ?? source.digest, policyVersion: catalog.core.version,
-        selectedProfiles: profiled ? ["angular-nx"] : [], checks: catalog.checks,
+        selectedProfiles: profiled ? [fixtureProfile] : [], checks: catalog.checks,
         skills: skills.map((id) => ({ id })), adapters: [hermesBundleAdapter],
       }));
       if (!artifact) throw new Error("Expected the Hermes fixture artifact.");
       const profiles = await Promise.all(artifact.manifest.policy.profiles.map(async ({ id }) => ({
-        id, name: `axiom:profile-${id}`, content: await readFile(join(process.cwd(), "profiles", id, "PROFILE.md"), "utf8"),
+        id, name: `axiom:profile-${id}`, content: await readFile(join(repository, "profiles", id, "PROFILE.md"), "utf8"),
       })));
-      expect(profiles.map(({ id }) => id)).toEqual(profiled ? ["angular-nx", "ui-atomic"] : []);
+      expect(profiles.map(({ id }) => id)).toEqual(profiled ? [fixtureProfile, "ui-atomic"] : []);
       const fixture = join(workspace, "fixture.txt");
       await writeFile(fixture, "This disposable fixture stays unchanged.\n");
       const brief = taskBriefSchema.parse({
@@ -207,7 +209,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           return { id, path, relative, bytes: await readFile(path) };
         }));
         for (const { id, path, relative, bytes } of definitions) {
-          const replacement = JSON.stringify({ ...JSON.parse(bytes.toString("utf8")), extends: id === "ui-atomic" ? ["angular-nx"] : [] });
+          const replacement = JSON.stringify({ ...JSON.parse(bytes.toString("utf8")), extends: id === "ui-atomic" ? [fixtureProfile] : [] });
           await writeFile(path, replacement);
           if (alterInventory) manifest.files.find((file: { path: string }) => file.path === relative).digest = hash(replacement);
         }
@@ -234,7 +236,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           });
           expect(result.code).toBe(0);
           const attached = loopback.requests.flatMap(({ toolResults }) => toolResults.map((raw) => JSON.parse(raw)))
-            .some((result) => result.inherited_profiles?.some(({ id }: { id: string }) => id === "angular-nx"));
+            .some((result) => result.inherited_profiles?.some(({ id }: { id: string }) => id === fixtureProfile));
           expect(attached, `changed inventory: ${alterInventory}`).toBe(false);
           const terminal = result.stdout.trim().split("\n").map((line) => JSON.parse(line)).find(({ type }) => type === "result");
           expect(terminal?.session_id).toBeTruthy();

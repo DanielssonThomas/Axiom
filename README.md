@@ -16,7 +16,7 @@ Implementation is organized under the [Axiom v1 Epic](https://github.com/Daniels
 | --- | --- |
 | Core fundamentals | Stable principles with explicit conformance requirements. |
 | Portable skills | Focused workflows, progressive references, and executable evaluation cases. |
-| Optional profiles | Atomic UI design and Angular/Nx conventions without putting framework details in the core. |
+| Optional profiles | Framework-independent atomic UI design, selected explicitly for applicable work. |
 | Native adapters | Claude Code, Codex, and Hermes installation, activation, capability reporting, and lifecycle handling. |
 | Validation and evidence | Structural checks, repository-native tests, behavioral evaluations, and honest runtime verification. |
 

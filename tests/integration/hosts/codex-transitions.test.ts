@@ -56,7 +56,7 @@ test.runIf(executable && process.platform === "linux")(
       const { catalog } = loadBundleWorkspace(source);
       const bundle = await buildCodexBundle({ source, catalog, destination: join(root, "bundle"), version: "0.1.0", profiles: [] });
       const updated = await buildCodexBundle({
-        source, catalog, destination: join(root, "updated"), version: "0.1.1", profiles: ["angular-nx"],
+        source, catalog, destination: join(root, "updated"), version: "0.1.1", profiles: ["ui-atomic"],
       });
       const sandbox = { cwd: profile.workspace, model, approvalPolicy: "never", sandbox: "read-only" };
 

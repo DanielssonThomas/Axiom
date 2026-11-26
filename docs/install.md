@@ -14,18 +14,11 @@ pnpm build
 node packages/cli/dist/index.js bundle --out "$AXIOM_DIST" --version 0.1.0
 ```
 
-The build stages native Claude and Codex marketplaces and a local Git repository for Hermes. The default includes the complete core and all canonical skills. Add `--profile angular-nx` to select Angular/Nx with its inherited atomic UI profile. The command reports the local Hermes file URL and full Git commit for its native pin. Save `axiom-distribution.json` with the staged artifacts. It records the committed source revision, artifact version, resolved policy identity, pinned CLI versions, and per-host digests. Build fixtures under `packages/bundles/dist/fixtures` support packaging tests and carry `fixture: true`.
+The build stages native Claude and Codex marketplaces and a local Git repository for Hermes. The default includes the complete core and all canonical skills. Add `--profile ui-atomic` to select the optional framework-independent UI profile. The command reports the local Hermes file URL and full Git commit for its native pin. Save `axiom-distribution.json` with the staged artifacts. It records the committed source revision, artifact version, resolved policy identity, pinned CLI versions, and per-host digests. Build fixtures under `packages/bundles/dist/fixtures` support packaging tests and carry `fixture: true`.
 
 The assembler selects canonical runtime files and excludes evaluations, graders, credentials, and run outputs. Claude and Hermes use the shared runtime inventory in `axiom-bundle.json`, and the Codex distribution pins its file inventory by digest. A repeat build from the same reviewed inputs produces the same distribution manifest and Hermes commit.
 
-For the experimental development distribution, use an empty output path and select the profile explicitly.
-
-```sh
-AXIOM_DIST="$PWD/dist/axiom-0.1.0-praxis.1"
-node packages/cli/dist/index.js bundle --out "$AXIOM_DIST" --version 0.1.0-praxis.1 --profile angular-nx
-```
-
-This version is intended for early Praxis development with Angular/Nx and inherited atomic UI policy. Use the native installation commands below with its staged directory and manifest. Its qualification status is experimental.
+If an earlier distribution selected `angular-nx`, stage a new version with the core defaults or select `ui-atomic`, then follow the native update steps. Keep project-specific framework rules in the owning repository's instructions.
 
 ## Claude Code
 
@@ -89,7 +82,7 @@ hermes --profile axiom-test plugins remove axiom
 
 Start a new session in the selected profile after changing plugin state. Check the native inventory, then verify policy loading and a skill call in that session. [Hermes Agent plugin lifecycle](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins)
 
-For the Angular/Nx distribution, the system prompt carries the full core and a profile index. Relevant work retrieves the complete canonical profiles through native `skill_view`. Use `name="axiom:profile-angular-nx", file_path="PROFILE.md"` and `name="axiom:profile-ui-atomic", file_path="PROFILE.md"`. The recorded policy remains incomplete until the provider-bound request contains both native tool results.
+When the distribution selects `ui-atomic`, the system prompt carries the full core and a profile index. Relevant work retrieves the selected profile through native `skill_view` with `name="axiom:profile-ui-atomic", file_path="PROFILE.md"`. The loading receipt requires the canonical profile content in the provider-bound request.
 
 ## Verify the result
 

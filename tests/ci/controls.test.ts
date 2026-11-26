@@ -33,8 +33,7 @@ test("runs locked foundation and fixture checks on all three hosted platforms wi
   expect(job.strategy["fail-fast"]).toBe(false);
   const commands = job.steps.map((step: { run?: string }) => step.run);
   expect(commands).toEqual(expect.arrayContaining([
-    "pnpm install --frozen-lockfile", "pnpm typecheck", "pnpm build",
-    "npm ci --prefix profiles/angular-nx/evals/fixtures/angular-workspace", "pnpm test",
+    "pnpm install --frozen-lockfile", "pnpm typecheck", "pnpm build", "pnpm test",
   ]));
   expect(job.steps.find((step: { uses?: string }) => step.uses?.startsWith("actions/checkout@")).with["persist-credentials"]).toBe(false);
   expect(deterministic.jobs.deterministic.needs).toBe("platform");

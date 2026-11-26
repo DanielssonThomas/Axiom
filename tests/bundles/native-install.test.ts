@@ -7,6 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import { parse } from "yaml";
 import { runClaudeHook, runtimeFile } from "../../adapters/claude/src/runtime.js";
 import { readBundle, verifyBundle } from "../../adapters/hermes/src/bundle.js";
+import { loadBundleWorkspace } from "../../packages/bundles/src/index.js";
 
 const checkout = fileURLToPath(new URL("../../", import.meta.url));
 const temporary: string[] = [];
@@ -33,12 +34,17 @@ afterEach(() => {
   for (const root of temporary.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+test("the distribution catalog offers the framework-independent UI profile", () => {
+  const { catalog } = loadBundleWorkspace(checkout);
+  expect(catalog.profiles.map(({ text }) => JSON.parse(text).id)).toEqual(["ui-atomic"]);
+});
+
 test("assembles all three versioned native distributions and a reproducible Hermes pin", async () => {
   const { runNativeBundle } = await import("../../packages/cli/src/native-install.js");
   const { repository, root, revision } = createWorkspace();
   const first = join(root, "first release");
   const second = join(root, "second release");
-  const options = { repository, version: "0.2.5", profiles: ["angular-nx"] };
+  const options = { repository, version: "0.2.5", profiles: ["ui-atomic"] };
   const a = await runNativeBundle({ ...options, output: first });
   const b = await runNativeBundle({ ...options, output: second });
   expect(a.outcome).toEqual({ status: "passed" });
@@ -47,7 +53,7 @@ test("assembles all three versioned native distributions and a reproducible Herm
   expect(manifest(first)).toEqual(manifest(second));
   const { hosts, policy } = manifest(first);
   expect(manifest(first)).toMatchObject({ version: "0.2.5", sourceRevision: revision });
-  expect(policy.profiles.map(({ id }: { id: string }) => id).sort()).toEqual(["angular-nx", "ui-atomic"]);
+  expect(policy.profiles.map(({ id }: { id: string }) => id)).toEqual(["ui-atomic"]);
   expect(Object.keys(hosts)).toEqual(["claude", "codex", "hermes"]);
   expect(hosts.hermes.commit).toMatch(/^[a-f0-9]{40}$/);
   const list = execFileSync("git", ["ls-tree", "-r", "--name-only", hosts.hermes.commit], {
@@ -166,7 +172,7 @@ test.runIf(Boolean(process.env.AXIOM_TEST_CODEX_BINARY) && process.platform === 
     expect(prompt).toContain("axiom:verify");
     expect(prompt).toContain(original.trim());
     const distribution = join(root, "updated");
-    const update = await runNativeBundle({ repository, output: distribution, version: "0.2.6", profiles: ["angular-nx"] });
+    const update = await runNativeBundle({ repository, output: distribution, version: "0.2.6", profiles: ["ui-atomic"] });
     expect(update.outcome).toEqual({ status: "passed" });
     expect((await runCodexLifecycle({ ...target, distribution, action: "update" })).outcome).toEqual({ status: "passed" });
     const upgraded = run(program, ["debug", "prompt-input"]);

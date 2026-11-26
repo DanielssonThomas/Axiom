@@ -32,7 +32,7 @@ Keep skills generic and selectively load their references. Runtime skill bundles
 | `packages/bundles/` | Reproducible native release assembly. |
 | `adapters/{claude,codex,hermes}/` | Thin native integrations backed by shared contracts and logic. |
 | `skills/{context,design,verify,diagnose,delegate,knowledge}/` | Core reusable workflows and their local evaluations. |
-| `profiles/{ui-atomic,angular-nx}/` | Optional UI and Angular/Nx conventions. |
+| `profiles/ui-atomic/` | Optional framework-independent UI composition and verification. |
 | `evals/{cases,graders}/` | Shared behavioral cases and independent grading assets. |
 | `tests/<area>/` and `tests/integration/hosts/` | Contract, implementation, and actual-host verification. |
 
@@ -44,15 +44,7 @@ Use existing libraries, native packaging, framework generators, and repository t
 
 `ui-atomic` owns the responsibility and dependency rules for atoms, molecules, organisms, and templates. UI-layer dependencies point toward lower layers. Feature composition consumes the appropriate layers while preserving domain ownership.
 
-`angular-nx` extends `ui-atomic` rather than copying its rules. It adds:
-
-- Application shells for bootstrap, routing, configuration, and composition; scoped libraries for reusable behavior and UI.
-- A directory for every page and every collection, with component implementation, external template, and relevant tests colocated. For example, `pages/dashboard/dashboard.component.ts` and `pages/dashboard/dashboard.component.html` share the `dashboard` directory.
-- Named domain, API, and reusable UI models in their own owned model/schema files, even with one consumer. Existing schema-owned contracts remain derived rather than manually duplicated.
-- Appropriate public APIs, selected layer suffix conventions, and dependency restrictions within and between libraries.
-- Existing repository test tooling and framework-compatible generator options, selected from the actual installed versions.
-
-A collection is a cohesive feature composition, not automatically another atomic layer. A component directory does not require a separate build library. Private local types need not become public interfaces, and similar DTO/domain/view-model shapes do not imply a single contract.
+Keep framework, generator, and project conventions in the owning repository's instructions. Axiom uses those instructions as context for its shared engineering workflows. The default distribution contains the core and canonical skills. Optional profiles apply when explicitly selected.
 
 ## Workspace contracts
 
