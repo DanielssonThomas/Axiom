@@ -6,6 +6,8 @@ Status values follow [AX-05 and the conformance rules](../core/AXIOMS.md#authori
 
 Angular/Nx observations below describe the archived profile and source revisions. The [proposed profile scope amendment](#proposed-profile-scope-amendment) describes the new candidate's distribution scope.
 
+The owner selected Codex and Hermes as the required hosts for #19 and v1 on 2026-11-26. Claude Code remains unqualified for v1. Its historical observations remain available and its external-model result remains `not_run`. The release gate is specified in [#20](https://github.com/DanielssonThomas/Axiom/issues/20).
+
 ## Linux CLI observations
 
 | Requirement | Claude Code 2.1.330, print CLI | Codex 0.172.0-alpha.2, exec CLI | Hermes Agent 0.23.3, named-profile CLI |
@@ -149,9 +151,17 @@ pnpm test -- tests/integration/hosts
 
 An unconfigured host reports blocked installation. The suite uses synthetic localhost providers and leaves external model behavior unrun. The isolated Claude benchmark probe runs two pairs through the independently metered provider broker. The independent graders fail the unchanged reuse artifact and the missing preview disposition in both arms, even when all four native processes complete. The preview check records the unavailable capability using the sandbox configuration and the tool surface observed at the broker. The offline replay reproduces the assertion outcomes.
 
+### Source-bound regression observations
+
+The Linux `settled-work.test.ts` cases install the current bundle into a disposable Codex exec or Hermes named CLI profile. A scripted provider sends one tool call at a time. Native hooks capture the fixture source before and after the call, and the test correlates them with the completed native command. The test uses the existing settled-work prompt and graders.
+
+The named regression fails for the seeded mismatch after the test edit. It passes after the repair alongside the unchanged acceptance test. The receipts bind each complete TAP result to its command exit status and source digest. Removing the command receipts fails the required prevention grade. A separate parser test rejects truncated reports, contradictory exits, skipped tests and ambiguous results.
+
+These observations establish the scripted receipt path. Live preflight for the settled-work case still requires equivalent capture in the credential-isolated account runner. The local Hermes fixture can run shell commands with inert credentials. The account runner restricts that route to file and skill tools.
+
 ## Live qualification run plan
 
-Run preflight on a clean reviewed Linux checkout with Node.js 24, built outputs, and the three pinned native CLIs on `PATH`. The `--preflight` flag checks the reviewed commit, grader, cases, executable version, limits, and Bubblewrap for Claude. It uses a disposable home for `--version`. A passing preflight leaves qualification `blocked` until live evidence is collected.
+Run preflight on a clean reviewed Linux checkout with Node.js 24, built outputs, and the pinned native CLIs for the selected hosts. The `--preflight` flag checks the reviewed commit, grader, cases, executable version and limits. It uses a disposable home for `--version`. A passing preflight leaves qualification `blocked` until live evidence is collected. The historical Claude validation route remains documented here with its Bubblewrap requirement.
 
 ```sh
 BASELINE=$(git rev-parse HEAD)
@@ -219,7 +229,7 @@ Record individually observed critical violations, including premature dependent 
 
 ### Authorized Linux ordinary-session plan
 
-Use GPT-6 Luna in the pinned Codex 0.172.0-alpha.2 and Hermes 0.23.3 native CLI sessions. Allow one Axiom-enabled attempt per row and host, with a 120-second wall-clock limit per session, and one active session per host. Each attempt starts with a clean writable fixture and disposable installed profile. Stage the fixture and policy from the same reviewed revision. Use the case prompt as written. These trials measure Axiom-enabled conformance. Historical paired results remain comparative evidence. Claude remains a required host and its real-model trials remain unrun.
+Use GPT-6 Luna in the pinned Codex 0.172.0-alpha.2 and Hermes 0.23.3 native CLI sessions. Allow one Axiom-enabled attempt per row and host, with a 120-second wall-clock limit per session, and one active session per host. Each attempt starts with a clean writable fixture and disposable installed profile. Stage the fixture and policy from the same reviewed revision. Use the case prompt as written. These trials measure Axiom-enabled conformance. Historical paired results remain comparative evidence.
 
 | Trial | Reviewed case | Independent evidence |
 | --- | --- | --- |
@@ -302,12 +312,12 @@ The owner removed framework-specific policy from the distribution scope. The mat
 | Hermes brief preservation | Native handoff discovery guidance added and observed in a scripted request. The live model launched before reading the task. | One focused Hermes worker case with linked first-request brief, full policy, and native parent verification after independent plan review. |
 | Angular/Nx application | The historical Codex result passed and the Hermes attempt left an activation gap and a failed artifact. The framework profile was removed from the proposed distribution. | Review the scope amendment. Retain the original results and drop the proposed Angular/Nx rerun from the new candidate's plan. |
 | Codex V2 worker brief | Native observation limitation. Worker linkage, scoped output and parent verification are known. | Keep blocked pending an observable native surface or owner approval of the reviewed delivery-by-reference approach. |
-| Settled prevention on Codex and Hermes | Missing source-at-command evidence. Independent test effectiveness already passed on both saved artifacts. | Qualify the paired native hook observer with scripted providers. If it passes, use at most one bounded replacement per host for this observation defect. |
+| Settled prevention on Codex and Hermes | Independent test effectiveness passed on both saved artifacts. The scripted native hook observer captures source at command time on both hosts. The live account runner lacks equivalent coverage. | Qualify account-runner isolation and capture with synthetic credentials, then authorize at most one bounded replacement per host for the original observation defect. |
 | Hermes ordinary clarification | Observed model behavior failure, with no systematic defect established. | Keep the failure visible. If the owner retains mandatory ordinary Hermes clarification, review one prospective trial of the other existing material-decision case as a separate qualification decision. The observation-defect replacement rule does not apply. A structured-only claim leaves ordinary clarification open unless the owner adopts a separately reviewed release-scope amendment. |
 | General refresh through resume and compaction | Native lifecycle limitation. Scoped fresh-session lifecycle and selected resume or pruning paths have evidence. | Review a fresh-session claim for v1 and list the unsupported refresh paths. Required general refresh stays blocked unless the owner adopts a separately reviewed scope amendment or obtains native evidence. |
-| Claude ordinary real-model behavior | Outstanding authorization and missing evidence. Scripted installation and native lifecycle checks are available. | Keep the required host open. There is no approved Claude model run. |
+| Claude ordinary real-model behavior | `not_run`. Scripted installation and native lifecycle checks are available. | Retain the historical evidence. The current #19 scope covers Codex and Hermes. |
 
-The first proposed live slice is one Hermes session with GPT-6 Luna and the existing account for `preserve-delegated-requirements`, at 120 seconds. The handoff case allows one worker with the fixture’s 30-second limit. A strict shared delegation grade requires the source-bound parent test receipt. The second slice is two `settled-catalog-repair` replacements, one per host with the same model and timeout, contingent on a passing scripted receipt probe. Use the same reviewed fixtures and prompts in fresh disposable installs against the final reviewed candidate. Run no more than one session at a time per host. The combined proposal totals at most three sessions and 360 seconds of session time and requires explicit authorization. Codex V2 delegation, Hermes ordinary clarification, and Claude remain separate decisions.
+The first proposed live slice is one Hermes session with GPT-6 Luna and the existing account for `preserve-delegated-requirements`, at 120 seconds. The handoff case allows one worker with the fixture’s 30-second limit. A strict shared delegation grade requires the source-bound parent test receipt. The second slice is two `settled-catalog-repair` replacements, one per host with the same model and timeout, contingent on verified account-runner isolation and receipt capture. Use the same reviewed fixtures and prompts in fresh disposable installs against the final reviewed candidate. Run no more than one session at a time per host. The combined proposal totals at most three sessions and 360 seconds of session time and requires explicit authorization. Codex V2 delegation and Hermes ordinary clarification remain separate decisions.
 
 The pinned install, update, rollback, disable and uninstall paths, fresh-session policy delivery, shared checks, Codex and Hermes reuse and verification reporting, and verified native structured clarification surfaces are technically ready for experiments within their observed combinations. Axiom’s Hermes handoff cue and progressive profile delivery have scripted native evidence. Production delegation, general resume and compaction claims, and formal v1 qualification remain open.
 
@@ -317,8 +327,8 @@ The pinned Linux distribution tests exercise rollback from a newer fixture artif
 
 | Criterion | Current disposition | Smallest outstanding evidence or action |
 | --- | --- | --- |
-| Final bundles installed in clean ordinary sessions | Scoped scripted-provider evidence exists for all three hosts. Ordinary real-model runs completed on Codex and Hermes against the reviewed evaluation source. | Claude real-model qualification remains unrun pending authorized access. |
-| Exact host, model, OS, surface, bundle, policy and load mechanism | Recorded for the historical runs, loopback probes, and ordinary Codex and Hermes trials. | Complete Claude and verify native loading for any optional profile included in the compatibility claim. |
+| Final bundles installed in clean ordinary sessions | Scoped scripted-provider evidence exists for all three hosts. Ordinary real-model runs completed on Codex and Hermes against the reviewed evaluation source. | Complete and bind the missing Codex and Hermes observations to the candidate. |
+| Exact host, model, OS, surface, bundle, policy and load mechanism | Recorded for the historical runs, loopback probes, and ordinary Codex and Hermes trials. | Verify the source, bundle and native loading for the qualified configurations and any claimed optional profile. |
 | Real behaviors, lifecycle and delegated work | Codex and Hermes results are recorded above. Required behavior and delegation evidence remain failed or incomplete. General policy refresh during some resume and compaction paths remains blocked. | Resolve the specific failures and evidence gaps against the adopted criteria. Verify affected lifecycle coverage on each claimed surface. |
 | Negative controls | Scripted native disabled/missing activation, check failures and lost-worker evidence are recorded for their stated surfaces. | Verify required controls on the final candidate and keep each limitation visible in the matrix. |
 | Compatibility matrix | The matrix records actual scoped outcomes. Release qualification remains blocked. | Add reviewed final evidence and explicit reasons for unsupported combinations. |
