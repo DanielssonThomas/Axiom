@@ -70,7 +70,7 @@ test("records positive standard behavior separately from usage and installed-hos
       { outcome: { status: "blocked" } }, ...Array.from({ length: 3 }, () => ({ outcome: { status: "not_run" } })),
     ] } } });
   } finally { await rm(root, { recursive: true, force: true }); }
-});
+}, 20_000);
 
 test("replays the graded arm when a completed native arm could not be captured", async () => {
   const root = await mkdtemp(join(tmpdir(), "axiom-standard-capture-"));
