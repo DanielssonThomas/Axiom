@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { PolicyIdentity, TaskBrief } from "@axiom/contracts";
 import { openLoopback } from "./loopback.js";
-import { codexSettledFixture } from "./native-settled.js";
+import { codexSettledFixture, hermesSettledFixture } from "./native-settled.js";
 import { reviewWorkerReference, verifyWorkerReference } from "./worker-reference.js";
 
 const policy: PolicyIdentity = { version: "1", digest: "sha256:" + "a".repeat(64), profiles: [] };
@@ -62,33 +62,40 @@ test("matches native pre and post events for the correlated worker and blocks ga
 });
 
 const codex = process.env.AXIOM_TEST_CODEX_BINARY;
-test.runIf(process.platform === "linux" && !!codex)("blocks a narrowed verification in the installed Codex project workflow", async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-protected-suite-")));
-  const workspace = join(root, "workspace");
-  const journal = join(root, "commands.jsonl");
-  const repository = await realpath(process.cwd());
-  const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
-  const model = "gpt-5.4";
-  const commands = ["node --test narrow.test.mjs", "node --test"];
-  const provider = await openLoopback("codex", model, ({ toolResults }) => {
-    const next = commands[toolResults.length];
-    if (next) return { name: "exec_command", arguments: JSON.stringify({ cmd: next, workdir: workspace, login: false }) };
-  });
-  try {
-    await mkdir(workspace);
-    await writeFile(join(workspace, "AGENTS.md"), "The verification command is `node --test`.\n");
-    await writeFile(join(workspace, "protected.test.mjs"), "import { test } from 'node:test'; test('protected example', () => {});\n");
-    execFileSync("git", ["init", "--quiet"], { cwd: workspace, stdio: "ignore" });
-    await codexSettledFixture({ root, repository, revision, workspace, program: codex!, prompt: "Verify the disposable workspace.",
-      model, endpoint: provider.endpoint, journal, signal: AbortSignal.timeout(25_000) });
-    const output = provider.requests.flatMap(({ toolResults }) => toolResults);
-    expect(output.some((result) => result.includes("Command blocked by PreToolUse hook: Run the documented verification command"))).toBe(true);
-    expect(output.some((result) => result.includes("ok 1 - protected example"))).toBe(true);
-  } finally {
-    await provider.close();
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
-  }
-}, 30_000);
+const hermes = process.env.AXIOM_HERMES_CLI;
+for (const host of ["codex", "hermes"] as const) {
+  const program = host === "codex" ? codex : hermes;
+  const launch = host === "codex" ? codexSettledFixture : hermesSettledFixture;
+  test.runIf(process.platform === "linux" && !!program)("blocks a narrowed verification in the installed " + host + " project workflow", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-protected-suite-")));
+    const workspace = join(root, "workspace");
+    const journal = join(root, "commands.jsonl");
+    const repository = await realpath(process.cwd());
+    const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
+    const model = host === "codex" ? "gpt-5.4" : "fixture-model";
+    const commands = ["node --test narrow.test.mjs", "node --test"];
+    const provider = await openLoopback(host, model, ({ toolResults }) => {
+      const next = commands[toolResults.length];
+      if (next) return host === "codex"
+        ? { name: "exec_command", arguments: JSON.stringify({ cmd: next, workdir: workspace, login: false }) }
+        : { name: "terminal", arguments: JSON.stringify({ command: next, workdir: workspace, timeout: 10 }) };
+    });
+    try {
+      await mkdir(workspace);
+      await writeFile(join(workspace, "AGENTS.md"), "The verification command is `node --test`.\n");
+      await writeFile(join(workspace, "protected.test.mjs"), "import { test } from 'node:test'; test('protected example', () => {});\n");
+      execFileSync("git", ["init", "--quiet"], { cwd: workspace, stdio: "ignore" });
+      await launch({ root, repository, revision, workspace, program: program!, prompt: "Verify the disposable workspace.",
+        model, endpoint: provider.endpoint, journal, signal: AbortSignal.timeout(55_000) });
+      const output = provider.requests.flatMap(({ toolResults }) => toolResults);
+      expect(output.some((result) => result.includes("Run the documented verification command"))).toBe(true);
+      expect(output.some((result) => result.includes("ok 1 - protected example"))).toBe(true);
+    } finally {
+      await provider.close();
+      await rm(root, { recursive: true, force: true, maxRetries: 3 });
+    }
+  }, 60_000);
+}
 test.runIf(process.platform === "linux" && !!codex)("captures the exact digest and bytes through native Codex command hooks", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-worker-reference-")));
   const workspace = join(root, "workspace");

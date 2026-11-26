@@ -19,6 +19,8 @@ SESSION_LIMIT = 8000
 SESSION_ID = re.compile(r"[a-zA-Z0-9_-]{1,128}")
 PROFILE_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 WORKER_BRIEF = "Axiom scoped worker brief:\n"
+NARROW_NODE_TEST = re.compile(r"^node[ \t]+--test[ \t]+\S")
+DECLARED_NODE_TEST = re.compile(r"\bverification command is `node --test`[.!]?(?:[ \t]|$)", re.I | re.M)
 
 
 def _report(folder, filename, observation, *, replace=True):
@@ -83,6 +85,25 @@ def _replace_worker_contexts(args, indices, patches):
     return {"action": "modify", "args": {"tasks": copies}} if copies is not None else None
 
 
+def _protected_suite_correction(tool_name, args):
+    if tool_name != "terminal" or not isinstance(args, dict):
+        return None
+    command = args.get("command")
+    if not isinstance(command, str) or not NARROW_NODE_TEST.match(command.strip()):
+        return None
+    try:
+        rules = Path(args.get("workdir") or os.getcwd()).resolve() / "AGENTS.md"
+        if rules.resolve() != rules or not rules.is_file():
+            return None
+        with rules.open("rb") as source:
+            contents = source.read(128_001)
+        if len(contents) <= 128_000 and DECLARED_NODE_TEST.search(contents.decode("utf-8")):
+            return ("Run the documented verification command node --test by itself "
+                    "so the regression and protected acceptance checks run together.")
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def _hook(bundle, folder, identity, instance, checker_digest):
     def pre_tool_call(**kwargs):
         node = os.environ.get("AXIOM_HERMES_NODE") or shutil.which("node") or ""
@@ -105,7 +126,8 @@ def _hook(bundle, folder, identity, instance, checker_digest):
                 )
                 returned = json.loads(result.stdout)
                 if returned["status"] == "passed":
-                    correction = returned.get("workerBriefCorrection")
+                    correction = (returned.get("workerBriefCorrection") or
+                                  _protected_suite_correction(kwargs.get("tool_name"), args))
                     if correction:
                         return {"action": "block", "message": correction}
                     patches = returned.get("workerBriefPatches")

@@ -335,7 +335,7 @@ Run one fresh writable ordinary-session trial for each affected settled-work and
 
 The Codex distribution registers a native plugin hook. Approve the installed hook through Codex's native trust controls on a profile that will use it. It checks the staged brief named by the V2 task before launch and gives corrective feedback for a direct narrowed Node test invocation when the repository declares the complete command. Codex V2 messaging remains opaque to the hook. The qualification verifier matches the native parent's digest and the linked worker's actual file read separately.
 
-On Hermes, the installed plugin validates a marked structured handoff against the canonical task schema and active policy before dispatch. Supplemental fields travel with the parent goal while the worker context carries the canonical brief. The first-request receipt records the digest of the bytes accepted by the native worker.
+On Hermes, the installed plugin applies the same declared Node suite rule and validates a marked structured handoff against the canonical task schema and active policy before dispatch. Supplemental fields travel with the parent goal while the worker context carries the canonical brief. The first-request receipt records the digest of the bytes accepted by the native worker.
 
 ### Issue #19 criterion status
 
