@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { evidenceSchema } from "@axiom/contracts";
+import { evidenceSchema, taskBriefSchema } from "@axiom/contracts";
+import { isDeepStrictEqual } from "node:util";
 import type { Evidence, EvidenceOutcome } from "@axiom/contracts";
 import { EvidenceStore } from "@axiom/evidence";
 import { assessPolicy } from "@axiom/policy";
@@ -16,11 +17,29 @@ export type HermesEvent = "pre-tool" | "resume" | "compaction" | "delegation";
 interface HookObservation {
   outcome: EvidenceOutcome;
   evidence?: Evidence;
+  workerBriefCorrection?: string;
+}
+
+function checkWorkerBriefs(contexts: readonly string[], policy: Evidence["policy"]): string | undefined {
+  const hasInvalid = contexts.some((context) => {
+    try {
+      const parsed = taskBriefSchema.safeParse(JSON.parse(context));
+      return !parsed.success || !parsed.data.parentId || parsed.data.parentId === parsed.data.id
+        || !isDeepStrictEqual(parsed.data.policy, policy);
+    } catch {
+      return true;
+    }
+  });
+  if (hasInvalid) {
+    return "Provide the complete Axiom worker brief in the marked context before launching. Include id, parentId, objective, "
+      + "ownedPaths, policy, criteria, requiredCapabilities and limits. Use the exact effective policy object and the task's actual requirements.";
+  }
 }
 
 /** Assess the installed policy payload and retain the observed check through the shared archive. */
 export async function checkHermesEvent(
-  directory: string, archive: string, event: HermesEvent, native?: { profile: HermesProfile; session: string },
+  directory: string, archive: string, event: HermesEvent,
+  native?: { profile: HermesProfile; session: string; workerBriefs?: readonly string[] },
 ): Promise<HookObservation> {
   const started = new Date();
   let manifest;
@@ -75,7 +94,9 @@ export async function checkHermesEvent(
       provenance: "observed", artifacts: [], outcome,
     });
     await new EvidenceStore(archive).record("acceptance", evidence);
-    return { outcome, evidence };
+    const workerBriefCorrection = outcome.status === "passed" && native?.workerBriefs?.length
+      ? checkWorkerBriefs(native.workerBriefs, manifest.policy) : undefined;
+    return { outcome, evidence, ...(workerBriefCorrection && { workerBriefCorrection }) };
   } catch {
     return { outcome: { status: "blocked", reason: "The Hermes lifecycle evidence archive could not be written." } };
   }

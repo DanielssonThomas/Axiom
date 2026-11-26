@@ -68,13 +68,15 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       if ("interrupted" in gateway) throw new Error("The disposable native Hermes gateway did not start.");
       try {
         const trials = ["present", "missing-brief", "provider-rejected",
-          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : ["pretty-printed-brief"])];
+          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : ["pretty-printed-brief", "incomplete-typed-brief"])];
         const inspect = profiled ? inspectHermesWorkerProfileRetrieval : inspectHermesWorkerDelivery;
         for (const trial of trials) {
           loopback.requests.length = 0;
           const includeBrief = trial !== "missing-brief";
           const observedContext = trial === "pretty-printed-brief"
-            ? "Axiom scoped worker brief:\n" + JSON.stringify(brief, null, 2) : formatted;
+            ? "Axiom scoped worker brief:\n" + JSON.stringify(brief, null, 2)
+            : trial === "incomplete-typed-brief"
+              ? "Axiom scoped worker brief:\n" + JSON.stringify({ policy: brief.policy }) : formatted;
           const selectedProfiles = trial === "inherited-read" ? profiles.slice(0, 1)
             : trial === "missing-profile" ? profiles.slice(1)
             : trial === "retrieval-rejected" ? profiles.toReversed() : profiles;
@@ -106,6 +108,14 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
           const terminal = events.find((event) => event.type === "result");
           const delegation = events.find((event) => event.type === "tool_result" && event.name === "delegate_task");
+          if (trial === "incomplete-typed-brief") {
+            const rejections = loopback.requests.flatMap(({ toolResults }) => toolResults);
+            expect(rejections.some((result) => /complete Axiom worker brief/i.test(result))).toBe(true);
+            expect(delegation).toBeUndefined();
+            expect(loopback.requests.some(({ userMessages }) =>
+              userMessages.some((message) => message.includes(brief.objective)))).toBe(false);
+            continue;
+          }
           const rejected = trial === "provider-rejected" || trial === "retrieval-rejected";
           expect(delegation?.is_error).toBe(rejected);
           const workers = JSON.parse(delegation.output).results;

@@ -62,6 +62,33 @@ test("matches native pre and post events for the correlated worker and blocks ga
 });
 
 const codex = process.env.AXIOM_TEST_CODEX_BINARY;
+test.runIf(process.platform === "linux" && !!codex)("blocks a narrowed verification in the installed Codex project workflow", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-protected-suite-")));
+  const workspace = join(root, "workspace");
+  const journal = join(root, "commands.jsonl");
+  const repository = await realpath(process.cwd());
+  const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
+  const model = "gpt-5.4";
+  const commands = ["node --test narrow.test.mjs", "node --test"];
+  const provider = await openLoopback("codex", model, ({ toolResults }) => {
+    const next = commands[toolResults.length];
+    if (next) return { name: "exec_command", arguments: JSON.stringify({ cmd: next, workdir: workspace, login: false }) };
+  });
+  try {
+    await mkdir(workspace);
+    await writeFile(join(workspace, "AGENTS.md"), "The verification command is `node --test`.\n");
+    await writeFile(join(workspace, "protected.test.mjs"), "import { test } from 'node:test'; test('protected example', () => {});\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: workspace, stdio: "ignore" });
+    await codexSettledFixture({ root, repository, revision, workspace, program: codex!, prompt: "Verify the disposable workspace.",
+      model, endpoint: provider.endpoint, journal, signal: AbortSignal.timeout(25_000) });
+    const output = provider.requests.flatMap(({ toolResults }) => toolResults);
+    expect(output.some((result) => result.includes("Command blocked by PreToolUse hook: Run the documented verification command"))).toBe(true);
+    expect(output.some((result) => result.includes("ok 1 - protected example"))).toBe(true);
+  } finally {
+    await provider.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 30_000);
 test.runIf(process.platform === "linux" && !!codex)("captures the exact digest and bytes through native Codex command hooks", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "axiom-worker-reference-")));
   const workspace = join(root, "workspace");

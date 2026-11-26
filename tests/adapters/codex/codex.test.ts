@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,6 +70,51 @@ test("packages canonical skills and resolves policy through the shared contract"
   expect(JSON.parse(await readFile(join(plugin, "axiom-policy.json"), "utf8")).policy)
     .toEqual(built.policy);
   expect(built.instructions).toContain(built.policy.digest);
+});
+
+test("routes the full project RED and digest-bound worker reference through the installed Codex workflow", async () => {
+  for (const name of ["delegate", "verify"]) {
+    const directory = join(root, "source", "skills", name);
+    await mkdir(directory);
+    await writeFile(join(directory, "SKILL.md"), "# " + name + "\n");
+  }
+  const built = await bundle();
+  const plugin = join(built.root, "plugins", "axiom");
+  const workspace = join(root, "workspace");
+  await mkdir(join(workspace, ".axiom"), { recursive: true });
+  await writeFile(join(workspace, "AGENTS.md"), "The relevant verification command is `node --test`.\n");
+  expect(built.instructions).toContain("Run the complete repository verification command as its own shell call");
+  expect(built.instructions).toContain("Axiom worker reference:");
+  const workflow = join(plugin, "hooks", "workflow.mjs");
+  const call = (tool: string, input: object) => {
+    const execution = spawnSync(process.execPath, [workflow], {
+      input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: workspace, tool_name: tool, tool_input: input }),
+      encoding: "utf8", env: { ...process.env, PLUGIN_ROOT: plugin },
+    });
+    expect(execution.status, execution.stderr).toBe(0);
+    return JSON.parse(execution.stdout);
+  };
+  const decision = (tool: string, input: object) => call(tool, input).hookSpecificOutput;
+  const bash = (command: string) => decision("Bash", { command, workdir: workspace });
+  expect(bash("node --test test/single.test.mjs")).toMatchObject({ permissionDecision: "deny",
+    permissionDecisionReason: expect.stringContaining("node --test") });
+  expect(bash("node --test")).toBeUndefined();
+  expect(bash("git status --short")).toBeUndefined();
+
+  const reference = ".axiom/example-worker.json";
+  const brief = { id: "example-worker", parentId: "example-parent", objective: "Change a value.",
+    policy: built.policy, ownedPaths: ["value.mjs"], criteria: [{ id: "value", description: "Return the approved value.", required: true }],
+    requiredCapabilities: ["process-execution"], limits: { maxAttempts: 1, maxConcurrency: 1, timeoutMs: 30_000 } };
+  const body = JSON.stringify(brief);
+  const digest = "sha256:" + createHash("sha256").update(body).digest("hex");
+  await writeFile(join(workspace, reference), body);
+  const spawn = (message: string) => decision("collaborationspawn_agent", { task_name: "example_worker", message });
+  expect(spawn("Edit value.mjs.")).toMatchObject({ permissionDecision: "deny" });
+  expect(spawn("Axiom worker reference: " + reference + " " + built.policy.digest))
+    .toMatchObject({ permissionDecision: "deny" });
+  expect(spawn("Axiom worker reference: " + reference + " " + digest)).toMatchObject({
+    updatedInput: { task_name: "example_worker", message: expect.stringContaining("cat -- " + reference) },
+  });
 });
 
 test("updates and removes only the owned profile instruction fragment idempotently", async () => {

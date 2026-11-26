@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { PolicyIdentity } from "@axiom/contracts";
+import { taskBriefSchema, type PolicyIdentity } from "@axiom/contracts";
 import { resolvePolicy, type PolicyCatalog } from "@axiom/policy";
 
 export const marketplace = "axiom-local";
@@ -71,7 +71,19 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
     readFile(join(source, "profiles", id, "PROFILE.md"), "utf8")));
   const policyBody = [input.catalog.core.text, ...profiles].map((document) =>
     document.replaceAll("\r\n", "\n").trimEnd()).join("\n\n");
-  const instructions = `Axiom policy digest: ${policy.digest}\n\n${policyBody}`;
+  const workflow = [
+    ...(skills.verify ? ["Open axiom:verify before editing executable behavior. Save the regression first. "
+      + "Run the complete repository verification command as its own shell call, with the existing protected acceptance checks. "
+      + "Observe the expected failure before the repair. Repeat the full command after the repair."] : []),
+    ...(skills.delegate ? ["Open axiom:delegate before launching a worker. For native Codex V2, write the complete JSON TaskBrief "
+      + "under .axiom/<worker-id>.json. Include the parent and worker IDs, objective, ownedPaths, criteria with id/description/required, "
+      + "requiredCapabilities, limits with timeoutMs/maxAttempts/maxConcurrency, and this exact policy object: "
+      + JSON.stringify(policy) + ". Run sha256sum -- <path> by itself before spawning. In the native worker message include "
+      + "a line Axiom worker reference: <path> sha256:<hex> using the actual digest. Tell the worker to read that file with a "
+      + "standalone cat -- <path> command before editing. After the worker returns, inspect the delivered source, remove the temporary "
+      + "brief, and run the complete verification command by itself."] : []),
+  ];
+  const instructions = [`Axiom policy digest: ${policy.digest}`, policyBody, ...workflow].join("\n\n");
   if (instructions.includes(startMarker) || instructions.includes(endMarker)) throw new Error("Axiom content contains a reserved profile marker.");
 
   await mkdir(root, { recursive: true });
@@ -84,11 +96,23 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
       policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
     }],
   }));
+  const workflowMatcher = [skills.verify && "Bash", skills.delegate && "collaborationspawn_agent"].filter(Boolean).join("|");
   await write(join(plugin, ".codex-plugin/plugin.json"), json({
     name: "axiom", version: input.version, description: "Axiom engineering workflows.", skills: "./skills/",
+    ...(workflowMatcher && { hooks: "./hooks/hooks.json" }),
   }));
+  if (workflowMatcher) {
+    await write(join(plugin, "hooks", "workflow.mjs"), await readFile(new URL("../runtime/workflow.mjs", import.meta.url)));
+    await write(join(plugin, "hooks", "hooks.json"), json({ hooks: {
+      PreToolUse: [{ matcher: "^(" + workflowMatcher + ")$", hooks: [{
+        type: "command", command: 'node "$PLUGIN_ROOT/hooks/workflow.mjs"', timeout: 5,
+      }] }],
+    } }));
+  }
   for (const { name, bytes } of contents) await write(join(plugin, "skills", name, "SKILL.md"), bytes);
-  await write(join(plugin, "axiom-policy.json"), json({ policy, instructionsDigest: digest(instructions), skills }));
+  await write(join(plugin, "axiom-policy.json"), json({
+    policy, instructionsDigest: digest(instructions), skills, ...(skills.delegate && { workerFields: Object.keys(taskBriefSchema.shape) }),
+  }));
   await write(join(plugin, "axiom-policy.txt"), instructions + "\n");
   return { root, version: input.version, policy, skills: contents.map(({ name }) => name), instructions };
 }

@@ -54,6 +54,17 @@ def _installation(bundle):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _marked_worker_contexts(tool_name, args):
+    if tool_name != "delegate_task" or not isinstance(args, dict):
+        return []
+    if str(args.get("action") or "spawn").strip().lower() != "spawn":
+        return []
+    tasks = args.get("tasks")
+    contexts = [task.get("context") for task in tasks if isinstance(task, dict)] if isinstance(tasks, list) else [args.get("context")]
+    return [context[len(WORKER_BRIEF):] for context in contexts
+            if isinstance(context, str) and context.startswith(WORKER_BRIEF)]
+
+
 def _hook(bundle, folder, identity, instance, checker_digest):
     def pre_tool_call(**kwargs):
         node = os.environ.get("AXIOM_HERMES_NODE") or shutil.which("node") or ""
@@ -65,14 +76,18 @@ def _hook(bundle, folder, identity, instance, checker_digest):
             try:
                 if checker.resolve() != checker or _digest(checker.read_bytes()) != checker_digest:
                     raise ValueError("Installed Axiom checker differs from its bundle inventory.")
+                briefs = _marked_worker_contexts(kwargs.get("tool_name"), kwargs.get("args"))
+                encoded = json.dumps(briefs) if briefs else ""
+                if len(encoded) > 256_000:
+                    return {"action": "block", "message": "The structured Axiom worker brief exceeds the supported size."}
                 result = subprocess.run(
                     [node, str(checker), str(bundle), archive, "pre-tool", session],
-                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                    timeout=1, check=True,
+                    input=encoded, capture_output=True, text=True, timeout=1, check=True,
                 )
                 returned = json.loads(result.stdout)
                 if returned["status"] == "passed":
-                    return None
+                    correction = returned.get("workerBriefCorrection")
+                    return {"action": "block", "message": correction} if correction else None
                 if returned["status"] in ("failed", "blocked") and isinstance(returned["reason"], str):
                     outcome = returned
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
@@ -393,8 +408,10 @@ def register(ctx):
         parts.append("Before calling delegate_task, read the authoritative task and open the axiom:delegate skill. "
                      "Carry the full worker brief in each task's context. For an observed structured handoff, "
                      "start the context with 'Axiom scoped worker brief:' on its own line, then provide only the "
-                     "JSON task brief. The delegate skill describes the fields. "
-                     f"Copy this exact object into the policy field: {policy_json}")
+                     "JSON task brief. Include id, parentId, objective, ownedPaths, criteria with id/description/required, "
+                     "requiredCapabilities, and limits with timeoutMs/maxAttempts/maxConcurrency. "
+                     f"Copy this exact object into the policy field: {policy_json} "
+                     "Include every other field from the authoritative task. Use the same objective as the native goal.")
     if index:
         parts.append(index)
     sections = _split_sections("\n\n".join(parts))

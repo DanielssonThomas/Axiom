@@ -54,7 +54,7 @@ export async function codexSettledFixture(input: SettledFixture): Promise<Starte
   const command = hookCommand(input);
   const hooks = [{ matcher: "^Bash$", hooks: [{ type: "command", command }] }];
   await writeFile(join(profile.home, "hooks.json"), JSON.stringify({ hooks: { PreToolUse: hooks, PostToolUse: hooks } }));
-  let listed: { key: string; currentHash: string; command: string }[] = [];
+  let listed: { key: string; currentHash: string; command: string; source: string }[] = [];
   const listing = await runCodex(profile, ["app-server", "--stdio"], { signal, experimentalApi: true,
     onLine(line, send, end) {
       const event = JSON.parse(line);
@@ -69,10 +69,18 @@ export async function codexSettledFixture(input: SettledFixture): Promise<Starte
     },
   });
   expect(listing.code).toBe(0);
-  expect(listed).toHaveLength(2);
-  expect(listed.every((item) => item.command === command && item.currentHash && item.key)).toBe(true);
-  await appendFile(configuration, listed.map(({ key, currentHash }) => "\n[hooks.state." + JSON.stringify(key)
-    + "]\ntrusted_hash = " + JSON.stringify(currentHash) + "\n").join(""));
+  const observers = listed.filter((item) => item.command === command);
+  expect(observers).toHaveLength(2);
+  const workflows = listed.filter((item) => item.source === "plugin" && item.command.includes("/hooks/workflow.mjs"));
+  expect(workflows).toHaveLength(1);
+  const trusted = [...observers, ...workflows].map(({ key, currentHash, source }) => {
+    expect(key && currentHash).toBeTruthy();
+    const [declaration, contents] = currentHash.split("/");
+    expect(!!contents).toBe(source === "plugin");
+    return "\n[hooks.state." + JSON.stringify(key) + "]\ntrusted_hash = " + JSON.stringify(declaration)
+      + (contents ? "\ntrusted_content_hash = " + JSON.stringify(contents) : "") + "\n";
+  });
+  await appendFile(configuration, trusted.join(""));
   const turn = await runCodex(profile, ["--ask-for-approval", "never", "exec", "--sandbox", "workspace-write",
     "--ephemeral", "--color", "never", "--json", "--model", model, "-"], { input: prompt, signal });
   expect(turn.code).toBe(0);
