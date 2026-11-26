@@ -386,7 +386,9 @@ def register(ctx):
     parts = [f"Axiom policy digest {manifest['policy']['digest']}", core]
     if any(skill["id"] == "delegate" for skill in manifest["skills"]):
         parts.append("Before calling delegate_task, read the authoritative task and open the axiom:delegate skill. "
-                     "Carry the full worker brief in each task's context.")
+                     "Carry the full worker brief in each task's context. For an observed structured handoff, "
+                     "start the context with 'Axiom scoped worker brief:' on its own line, then provide the full "
+                     "task brief as JSON. The delegate skill describes the fields.")
     if index:
         parts.append(index)
     sections = _split_sections("\n\n".join(parts))

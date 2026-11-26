@@ -313,6 +313,7 @@ export function formatHermesWorkerContext(brief: TaskBrief): string {
 
 function inspectWorker(
   target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief, verifyProfiles: boolean,
+  observedContext?: string,
 ): { childSession?: string; outcome: EvidenceOutcome } {
   const unavailable = (reason: string) => ({ outcome: blocked(reason) });
   try {
@@ -343,7 +344,16 @@ function inspectWorker(
         || typeof receipt.coreLoaded !== "boolean" || (receipt.briefDigest !== null && !digestSchema.safeParse(receipt.briefDigest).success)) {
       return unavailable("The first Hermes worker request could not be matched to the selected policy and native spawn.");
     }
-    if (!receipt.coreLoaded || receipt.briefDigest !== digest(formatHermesWorkerContext(expected))) {
+    let context = formatHermesWorkerContext(expected);
+    if (observedContext !== undefined) {
+      const prefix = "Axiom scoped worker brief:\n";
+      const decoded = observedContext.startsWith(prefix) && taskBriefSchema.safeParse(JSON.parse(observedContext.slice(prefix.length)));
+      if (!decoded || !decoded.success || !isDeepStrictEqual(decoded.data, expected)) {
+        return { childSession, outcome: { status: "failed", reason: "The observed native handoff does not match the scoped worker brief." } };
+      }
+      context = observedContext;
+    }
+    if (!receipt.coreLoaded || receipt.briefDigest !== digest(context)) {
       return { childSession, outcome: { status: "failed", reason: "The first observed Hermes worker request omitted the complete core or staged task brief." } };
     }
     if (!verifyProfiles) return { childSession, outcome: { status: "passed" } };
@@ -377,8 +387,10 @@ function inspectWorker(
 }
 
 /** Verify the scoped brief and complete core in the first request of one native worker. */
-export function inspectHermesWorkerDelivery(target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief) {
-  return inspectWorker(target, parentSession, workerId, brief, false);
+export function inspectHermesWorkerDelivery(
+  target: HermesProfile, parentSession: string, workerId: string, brief: TaskBrief, observedContext?: string,
+) {
+  return inspectWorker(target, parentSession, workerId, brief, false, observedContext);
 }
 
 /** Verify first-request core and brief, followed by exact native profile retrieval in the same worker. */

@@ -68,11 +68,13 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
       if ("interrupted" in gateway) throw new Error("The disposable native Hermes gateway did not start.");
       try {
         const trials = ["present", "missing-brief", "provider-rejected",
-          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : [])];
+          ...(profiled ? ["inherited-read", "missing-profile", "retrieval-rejected"] : ["pretty-printed-brief"])];
         const inspect = profiled ? inspectHermesWorkerProfileRetrieval : inspectHermesWorkerDelivery;
         for (const trial of trials) {
           loopback.requests.length = 0;
           const includeBrief = trial !== "missing-brief";
+          const observedContext = trial === "pretty-printed-brief"
+            ? "Axiom scoped worker brief:\n" + JSON.stringify(brief, null, 2) : formatted;
           const selectedProfiles = trial === "inherited-read" ? profiles.slice(0, 1)
             : trial === "missing-profile" ? profiles.slice(1)
             : trial === "retrieval-rejected" ? profiles.toReversed() : profiles;
@@ -92,7 +94,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             });
             else scheduleProfile(0);
             return { name: "delegate_task",
-              arguments: JSON.stringify({ tasks: [{ goal: brief.objective, ...(includeBrief && { context: formatted }) }] }) };
+              arguments: JSON.stringify({ tasks: [{ goal: brief.objective, ...(includeBrief && { context: observedContext }) }] }) };
           });
           const parentPrompt = "Launch a single read-only fixture worker.";
           const result = await runHermes({
@@ -108,8 +110,9 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           expect(delegation?.is_error).toBe(rejected);
           const workers = JSON.parse(delegation.output).results;
           const { subagent_id: workerId } = workers[0];
-          const delivery = inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief);
-          const observed = inspect(target, terminal?.session_id, workerId, brief);
+          const delivery = inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief,
+            trial === "pretty-printed-brief" ? observedContext : undefined);
+          const observed = profiled ? inspect(target, terminal?.session_id, workerId, brief) : delivery;
           if (trial === "provider-rejected") {
             expect(loopback.requests.some(({ text }) => text.includes(formatted))).toBe(true);
             expect(workers[0].status).not.toBe("completed");
@@ -124,8 +127,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           if (!rejected) expect(terminal?.tokens).toMatchObject({ input: 18, output: 6 });
           const receipt = await readFile(join(selected, ".axiom-hermes", `delegated-${workerId}.json`), "utf8");
           expect(receipt).not.toContain(brief.objective);
-          expect(receipt).not.toContain(formatted);
-          expect(JSON.parse(receipt).briefDigest).toBe(includeBrief ? hash(formatted) : null);
+          expect(receipt).not.toContain(observedContext);
+          expect(JSON.parse(receipt).briefDigest).toBe(includeBrief ? hash(observedContext) : null);
           const childRequests = loopback.requests.filter(({ text }) => text.includes(brief.objective) && !text.includes(parentPrompt));
           expect(childRequests).toHaveLength(selectedProfiles.length + 1);
           expect(childRequests[0]?.model).toBe(model);
@@ -136,8 +139,15 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             expect(launch?.systemMessages.some((message) => message.includes(
               "Before calling delegate_task, read the authoritative task and open the axiom:delegate skill.",
             ))).toBe(true);
+            expect(launch?.systemMessages.some((message) => message.includes(
+              "start the context with 'Axiom scoped worker brief:' on its own line",
+            ))).toBe(true);
           }
-          expect(childRequests[0]?.text.includes(formatted)).toBe(includeBrief);
+          expect(childRequests[0]?.text.includes(observedContext)).toBe(includeBrief);
+          if (trial === "pretty-printed-brief") {
+            expect(inspectHermesWorkerDelivery(target, terminal?.session_id, workerId, brief, formatted).outcome.status)
+              .toBe("failed");
+          }
           for (const profile of profiles) {
             expect(childRequests[0]?.text).toContain(profile.name);
             expect(childRequests[0]?.text.includes(profile.content.trimEnd())).toBe(false);
@@ -190,7 +200,7 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             host: { agent: "hermes", version: hermesVersion, model, os: process.platform, surface: "named-profile-cli" },
             profile: target.profile, bundleDigest: artifact.manifest.digest, trial,
             parentSession: terminal?.session_id, workerSession: childSession, worker: workers[0].subagent_id,
-            expectedBriefDigest: hash(formatted), firstRequest: delivery.outcome, observed: observed.outcome,
+            expectedBriefDigest: hash(observedContext), firstRequest: delivery.outcome, observed: observed.outcome,
             parentTokens: terminal?.tokens, workerTokens: workers[0].tokens,
             realModelBehavior: { status: "not_run", reason: "The native requests used a scripted localhost provider." },
             qualification: { status: "blocked", reason: "Production worker and real-model verification are required." },
