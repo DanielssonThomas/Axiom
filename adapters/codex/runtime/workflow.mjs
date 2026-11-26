@@ -32,10 +32,15 @@ async function briefProblem(cwd, path) {
     const bytes = await boundedFile(await realpath(cwd), path, 16_384);
     if (!bytes) return prepareBrief;
     const brief = JSON.parse(bytes.toString("utf8"));
-    const { policy, workerFields } = JSON.parse(await readFile(selectedPolicy, "utf8"));
+    const { policy, workerFields, workerCapabilityPattern } = JSON.parse(await readFile(selectedPolicy, "utf8"));
     if (!brief || Object.keys(brief).length !== workerFields.length || !workerFields.every((name) => Object.hasOwn(brief, name))) {
       return "Use exactly these Axiom task brief fields: " + workerFields.join(", ")
         + ". Put supplemental task details inside objective or the native worker message.";
+    }
+    const capability = new RegExp(workerCapabilityPattern);
+    if (!Array.isArray(brief.requiredCapabilities)
+        || brief.requiredCapabilities.some((id) => typeof id !== "string" || !capability.test(id))) {
+      return "Use canonical capability IDs in requiredCapabilities. Use process-execution for running verification commands.";
     }
     if (typeof brief.parentId !== "string" || !brief.parentId || brief.id === brief.parentId ||
         path !== ".axiom/" + brief.id + ".json" || !isDeepStrictEqual(brief.policy, policy)) return prepareBrief;

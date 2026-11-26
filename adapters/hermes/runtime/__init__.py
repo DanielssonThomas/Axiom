@@ -432,6 +432,7 @@ def register(ctx):
                      "start the context with 'Axiom scoped worker brief:' on its own line, then provide only the "
                      "JSON task brief. Include id, parentId, objective, ownedPaths, criteria with id/description/required, "
                      "requiredCapabilities, and limits with timeoutMs/maxAttempts/maxConcurrency. "
+                     "Assign a distinct local worker id. Use process-execution for the capability to run verification commands. "
                      f"Copy this exact object into the policy field: {policy_json} "
                      "Include every other field from the authoritative task. Use the same objective as the native goal.")
     if index:

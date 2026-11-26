@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { taskBriefSchema, type PolicyIdentity } from "@axiom/contracts";
+import { capabilityIdSchema, taskBriefSchema, type PolicyIdentity } from "@axiom/contracts";
 import { resolvePolicy, type PolicyCatalog } from "@axiom/policy";
 
 export const marketplace = "axiom-local";
@@ -78,7 +78,8 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
     ...(skills.delegate ? ["Open axiom:delegate before launching a worker. For native Codex V2, write the complete JSON TaskBrief "
       + "at .axiom/<task_name>.json. Use the same lowercase underscore-separated value for id, file stem, and native task_name. "
       + "Use exactly these top-level fields: id, parentId, objective, ownedPaths, criteria, requiredCapabilities, limits, policy. "
-      + "Put supplemental task details inside objective. Each criterion has id, description, and required. Each limits object has "
+      + "Put supplemental task details inside objective. Use the capability ID process-execution when the worker must run commands. "
+      + "Each criterion has id, description, and required. Each limits object has "
       + "timeoutMs, maxAttempts, and maxConcurrency. Copy this exact object into policy: " + JSON.stringify(policy)
       + ". Run sha256sum -- <path> by itself before spawning. Give the worker the reference path and actual digest in the native "
       + "message. As the worker, read that exact file with a standalone cat -- <path> command before editing and check the digest. "
@@ -112,7 +113,10 @@ export async function buildCodexBundle(input: CodexBundleInput): Promise<CodexBu
   }
   for (const { name, bytes } of contents) await write(join(plugin, "skills", name, "SKILL.md"), bytes);
   await write(join(plugin, "axiom-policy.json"), json({
-    policy, instructionsDigest: digest(instructions), skills, ...(skills.delegate && { workerFields: Object.keys(taskBriefSchema.shape) }),
+    policy, instructionsDigest: digest(instructions), skills, ...(skills.delegate && {
+      workerFields: Object.keys(taskBriefSchema.shape),
+      workerCapabilityPattern: capabilityIdSchema.toJSONSchema().pattern,
+    }),
   }));
   await write(join(plugin, "axiom-policy.txt"), instructions + "\n");
   return { root, version: input.version, policy, skills: contents.map(({ name }) => name), instructions };

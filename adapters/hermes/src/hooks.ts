@@ -23,28 +23,50 @@ interface HookObservation {
 
 const briefFields = new Set(Object.keys(taskBriefSchema.shape));
 
+/** Keep the first complete JSON object and retain any separate native task notes. */
+export function parseHermesWorkerBrief(body: string) {
+  const input = body.trimStart();
+  if (input[0] !== "{") throw new Error("Expected a JSON worker brief.");
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < input.length; index++) {
+    const character = input[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === "{") depth++;
+    else if (character === "}" && --depth === 0) {
+      const entries = Object.entries(JSON.parse(input.slice(0, index + 1)));
+      const brief = taskBriefSchema.parse(Object.fromEntries(entries.filter(([key]) => briefFields.has(key))));
+      const extra = entries.filter(([key]) => !briefFields.has(key));
+      const trailing = input.slice(index + 1).trim();
+      const notes = [extra.length ? JSON.stringify(Object.fromEntries(extra)) : "", trailing].filter(Boolean).join("\n\n");
+      return { brief, notes };
+    }
+  }
+  throw new Error("Expected a complete JSON worker brief.");
+}
+
 function checkWorkerBriefs(contexts: readonly string[], policy: Evidence["policy"]) {
   const patches: NonNullable<HookObservation["workerBriefPatches"]> = [];
   try {
     for (const context of contexts) {
-      const raw: unknown = JSON.parse(context);
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid worker brief.");
-      const entries = Object.entries(raw);
-      const brief = taskBriefSchema.parse(Object.fromEntries(entries.filter(([key]) => briefFields.has(key))));
+      const { brief, notes } = parseHermesWorkerBrief(context);
       if (!brief.parentId || brief.parentId === brief.id || !isDeepStrictEqual(brief.policy, policy)) {
         throw new Error("Worker brief names a different policy or omits parent lineage.");
       }
-      const extra = entries.filter(([key]) => !briefFields.has(key));
-      patches.push(extra.length ? {
-        context: formatHermesWorkerContext(brief),
-        notes: JSON.stringify(Object.fromEntries(extra)),
-      } : null);
+      patches.push(notes ? { context: formatHermesWorkerContext(brief), notes } : null);
     }
     return patches.some(Boolean) ? { workerBriefPatches: patches } : {};
   } catch {
     return { workerBriefCorrection: "Provide the complete Axiom worker brief in the marked context before launching. "
-      + "Use the task's actual id, parentId, objective, ownedPaths, criteria, requiredCapabilities and limits. "
-      + "Copy the effective policy into policy with its exact version, digest and profiles." };
+      + "Assign a distinct local worker id and copy the actual parentId. Include objective, ownedPaths, criteria, requiredCapabilities and limits. "
+      + "Use process-execution for running verification commands. Copy policy with its exact version, digest and profiles." };
   }
 }
 

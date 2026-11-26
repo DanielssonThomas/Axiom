@@ -110,6 +110,10 @@ test("routes the full project RED and digest-bound worker reference through the 
   expect(bash("sha256sum -- " + reference)).toMatchObject({
     permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("exactly these Axiom task brief fields"),
   });
+  await writeFile(join(workspace, reference), JSON.stringify({ ...brief, requiredCapabilities: ["process execution"] }));
+  expect(bash("sha256sum -- " + reference)).toMatchObject({
+    permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("process-execution"),
+  });
   await writeFile(join(workspace, reference), JSON.stringify(brief));
   expect(bash("sha256sum -- " + reference)).toBeUndefined();
   expect(spawn("another_worker").hookSpecificOutput).toMatchObject({ permissionDecision: "deny" });

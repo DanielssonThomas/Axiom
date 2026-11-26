@@ -78,7 +78,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
             : trial === "incomplete-typed-brief"
               ? "Axiom scoped worker brief:\n" + JSON.stringify({ policy: brief.policy })
               : trial === "extended-typed-brief"
-                ? "Axiom scoped worker brief:\n" + JSON.stringify({ ...brief, notes: "Keep the reviewed fallback." }) : formatted;
+                ? "Axiom scoped worker brief:\n" + JSON.stringify({ ...brief, notes: "Keep the reviewed fallback. 🧭" })
+                  + "\n\nReview the case titled “Cabin {fallback}”." : formatted;
           const deliveredContext = trial === "extended-typed-brief" ? formatted : observedContext;
           const selectedProfiles = trial === "inherited-read" ? profiles.slice(0, 1)
             : trial === "missing-profile" ? profiles.slice(1)
@@ -161,7 +162,8 @@ test.runIf(Boolean(executable) && process.platform === "linux").each(["core", "s
           }
           expect(childRequests[0]?.text.includes(deliveredContext)).toBe(includeBrief);
           if (trial === "extended-typed-brief") {
-            expect(childRequests[0]?.userMessages.some((message) => message.includes("Keep the reviewed fallback."))).toBe(true);
+            expect(childRequests[0]?.userMessages.some((message) =>
+              message.includes("Keep the reviewed fallback.") && message.includes("Cabin {fallback}"))).toBe(true);
             expect(childRequests[0]?.text.includes(observedContext)).toBe(false);
           }
           if (trial === "pretty-printed-brief") {
