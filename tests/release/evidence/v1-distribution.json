@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+  "policy": {
+    "version": "1",
+    "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+    "profiles": []
+  },
+  "hosts": {
+    "codex": {
+      "directory": "codex",
+      "hostVersion": "0.172.0-alpha.2",
+      "digest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16"
+    },
+    "hermes": {
+      "directory": "hermes",
+      "hostVersion": "0.23.3",
+      "digest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+      "commit": "d13c176a257ec5c9589742f8401e9df8640053c1"
+    }
+  }
+}

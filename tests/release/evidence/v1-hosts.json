@@ -1,0 +1,678 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+  "bundleVersion": "0.1.0",
+  "policy": {
+    "version": "1",
+    "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+    "profiles": []
+  },
+  "codexEquivalence": {
+    "evidenceSource": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+    "releaseSource": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+    "codex": {
+      "directory": "codex",
+      "hostVersion": "0.172.0-alpha.2",
+      "digest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16"
+    },
+    "policy": {
+      "version": "1",
+      "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+      "profiles": []
+    },
+    "runtimeFiles": "byte-identical"
+  },
+  "hosts": [
+    {
+      "agent": "codex",
+      "version": "0.172.0-alpha.2",
+      "model": "gpt-6-luna",
+      "os": "linux",
+      "architecture": "x86_64",
+      "surface": "exec",
+      "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+      "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+      "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+      "policy": {
+        "version": "1",
+        "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+        "profiles": []
+      },
+      "cases": [
+        {
+          "kind": "clarification",
+          "caseId": "resolve-format-decision",
+          "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+          "archiveDigest": "sha256:4aa47bf50a49a21842bd6a90e81766bdfa95436811ac405a39ccbd2278c597bb",
+          "assertions": [
+            {
+              "criterionId": "clarify-material-format",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:1112055c3782083dae420fe9b2ea34a23fbdafd6de5682ac1cf93d3f6cb70ad4",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+            "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+            "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+            "nativeSkillReads": 6
+          }
+        },
+        {
+          "kind": "settled",
+          "caseId": "settled-catalog-repair",
+          "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+          "archiveDigest": "sha256:f4a45a9aa6092e7c29297e567cc13fb2fc3db2c16366ef069279cb7979938c34",
+          "assertions": [
+            {
+              "criterionId": "inspect-and-proceed",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "use-owned-formatter",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "reference-canonical-model",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "keep-small-owned-change",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "preserve-acceptance",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "demonstrate-prevention",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "nativeCheckReceipts": [
+            {
+              "exitCode": 1,
+              "tests": [
+                {
+                  "id": "catalog command acceptance",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats a single catalog word",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats multiword catalog keys",
+                  "status": "failed"
+                }
+              ],
+              "source": "sha256:107abe6f3024473042c98229543ddc0d3e18dd4ef762d48a319ff3d24560b1ac",
+              "report": "sha256:992de7ec6214adec2f188e54887deb3cb0c733ee951cdd588d659e7f2fec23cc"
+            },
+            {
+              "exitCode": 0,
+              "tests": [
+                {
+                  "id": "catalog command acceptance",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats a single catalog word",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats multiword catalog keys",
+                  "status": "passed"
+                }
+              ],
+              "source": "sha256:c408b6ff807cb0eab27c7ec743c3a185abbfbc2ee7db2c0f7795ca89645e3446",
+              "report": "sha256:673eb5c3bd085624762005a264b33296bd7ab9b988cbfb8b146fb4787730be69"
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:1112055c3782083dae420fe9b2ea34a23fbdafd6de5682ac1cf93d3f6cb70ad4",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+            "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+            "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+            "nativeSkillReads": 6
+          }
+        },
+        {
+          "kind": "reuse",
+          "caseId": "reuse-summary-formatter",
+          "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+          "archiveDigest": "sha256:2220cce9fc994e5c05ae0ca1c303cc2e53fdd8e624886a8aa189880ffd0bd287",
+          "assertions": [
+            {
+              "criterionId": "reuse-formatter",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "keep-command-cohesive",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:1112055c3782083dae420fe9b2ea34a23fbdafd6de5682ac1cf93d3f6cb70ad4",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+            "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+            "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+            "nativeSkillReads": 6
+          }
+        },
+        {
+          "kind": "preview",
+          "caseId": "report-unavailable-preview",
+          "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+          "archiveDigest": "sha256:107fba6851c19717873e2cfa5903bc99aba18fde49b9bbff0b32094f0bde891e",
+          "assertions": [
+            {
+              "criterionId": "report-preview-gap",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:1112055c3782083dae420fe9b2ea34a23fbdafd6de5682ac1cf93d3f6cb70ad4",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+            "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+            "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+            "nativeSkillReads": 6
+          }
+        },
+        {
+          "kind": "delegation",
+          "caseId": "preserve-delegated-requirements",
+          "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+          "archiveDigest": "sha256:e61150ee9e08ae5d252a5ec6483ef6586e388f0b72891770d52ebcd2772bcd5d",
+          "assertions": [
+            {
+              "criterionId": "verify-delegated-result",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "nativeCheckReceipts": [
+            {
+              "exitCode": 0,
+              "tests": [
+                {
+                  "id": "subscription displays the confirmed label",
+                  "status": "passed"
+                }
+              ],
+              "source": "sha256:74b4dab43cc28c2881146180ffeab38c7a3f6bb9f374029fadaf3f58f8a642c2",
+              "report": "sha256:230f3339fb9f84e72b0d63317da074347be0f743eeae55c81ba35e04682ee2df"
+            }
+          ],
+          "workerDurationMs": 17774,
+          "installedContext": {
+            "admissionDigest": "sha256:1112055c3782083dae420fe9b2ea34a23fbdafd6de5682ac1cf93d3f6cb70ad4",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+            "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+            "installationMechanism": "native plugin inventory, prompt input and read-only skill bytes",
+            "nativeSkillReads": 6
+          }
+        }
+      ],
+      "nativeLifecycle": {
+        "kind": "installed-native-loopback",
+        "source": {
+          "revision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "digest": "sha256:73bace3cbc86365c688cb895ad666f1465d007111b4c6ccd724f26143e521bb9"
+        },
+        "host": {
+          "agent": "codex",
+          "version": "0.172.0-alpha.2",
+          "model": "gpt-5.4",
+          "surface": "cli",
+          "os": "linux"
+        },
+        "bundleDigest": "sha256:a19c1960524206af84967876e136c198d11df946e7b1ee706ea15c04a4c8a80b",
+        "updatedBundleDigest": "sha256:624519799ed75f4f91830abf00821b944422222a97885472fe82a2a4cab50748",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+          "profiles": []
+        },
+        "updatedPolicy": {
+          "version": "1",
+          "digest": "sha256:d3e45d7ab2dbe84a74bec839d6d61f5f61df2fbefeb37c07391290ff6f9f1d77",
+          "profiles": [
+            {
+              "id": "ui-atomic",
+              "version": "1"
+            }
+          ]
+        },
+        "mechanism": "host AGENTS.md and skill layers observed in native debug and provider request",
+        "brokenControl": {
+          "status": "blocked",
+          "reason": "The expected Codex policy and skills did not reach the native prompt."
+        },
+        "checks": {
+          "installation": {
+            "status": "passed"
+          },
+          "ordinarySession": {
+            "status": "passed"
+          },
+          "skillDiscovery": {
+            "status": "passed"
+          },
+          "update": {
+            "status": "passed"
+          },
+          "disabledControl": {
+            "status": "passed"
+          },
+          "uninstall": {
+            "status": "passed"
+          },
+          "settingsPreservation": {
+            "status": "passed"
+          },
+          "skillUse": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "reuse": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "clarification": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "verificationReporting": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "profileBehavior": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "independentBenchmarks": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          }
+        },
+        "transport": {
+          "status": "passed"
+        },
+        "receiptDigest": "sha256:7713f4ce83848cf8c13f20afdd4c8b28d90862a8e10cec1dde6ad2b08be665a8"
+      },
+      "osVersion": "Ubuntu 26.04.1"
+    },
+    {
+      "agent": "hermes",
+      "version": "0.23.3",
+      "model": "gpt-6-luna",
+      "os": "linux",
+      "architecture": "x86_64",
+      "surface": "named-profile-cli",
+      "installationMechanism": "installed named profile and session-bound hook receipt",
+      "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+      "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+      "policy": {
+        "version": "1",
+        "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+        "profiles": []
+      },
+      "cases": [
+        {
+          "kind": "clarification",
+          "caseId": "clarify-material-decision",
+          "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "archiveDigest": "sha256:0ada7c648438355fb5cf526d9c31c39098aff35096b6bc4798c495561dd844dd",
+          "assertions": [
+            {
+              "criterionId": "clarify-before-edit",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:0bd3b9907e2464a6599b81011fa188fac7dbac0ac5183762f2f1d44f044ee773",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+            "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+            "installationMechanism": "installed named profile and session-bound hook receipt",
+            "passingPolicyReceipts": 8
+          }
+        },
+        {
+          "kind": "settled",
+          "caseId": "settled-catalog-repair",
+          "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "archiveDigest": "sha256:99079e0bf54fa56c7b0b79a7933b2e8a5d41d52c175f1ad8abb926c0c67e9f23",
+          "assertions": [
+            {
+              "criterionId": "inspect-and-proceed",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "use-owned-formatter",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "reference-canonical-model",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "keep-small-owned-change",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "preserve-acceptance",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "demonstrate-prevention",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "nativeCheckReceipts": [
+            {
+              "exitCode": 1,
+              "tests": [
+                {
+                  "id": "catalog command acceptance",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats a single catalog word",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats multiword catalog keys",
+                  "status": "failed"
+                }
+              ],
+              "source": "sha256:107abe6f3024473042c98229543ddc0d3e18dd4ef762d48a319ff3d24560b1ac",
+              "report": "sha256:b1dcf9037008587474ed54c08d10552144c7a6b7739502ec521d664c54ab325d"
+            },
+            {
+              "exitCode": 0,
+              "tests": [
+                {
+                  "id": "catalog command acceptance",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats a single catalog word",
+                  "status": "passed"
+                },
+                {
+                  "id": "formats multiword catalog keys",
+                  "status": "passed"
+                }
+              ],
+              "source": "sha256:c408b6ff807cb0eab27c7ec743c3a185abbfbc2ee7db2c0f7795ca89645e3446",
+              "report": "sha256:cbc122eb7c2ba1833094e8d001c0fc1172eb1d2ab53f885688f2f2d8ea22f435"
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:8ec4609f5935074f40ba05f467400e1912ea025f82fdc33331da111667236332",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+            "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+            "installationMechanism": "installed named profile and session-bound hook receipt",
+            "passingPolicyReceipts": 17
+          }
+        },
+        {
+          "kind": "reuse",
+          "caseId": "reuse-summary-formatter",
+          "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "archiveDigest": "sha256:298692b1a864dca25fa6ff73e5c475e651750e6b4ccd473ad5101cf28e41d870",
+          "assertions": [
+            {
+              "criterionId": "reuse-formatter",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            },
+            {
+              "criterionId": "keep-command-cohesive",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:0bd3b9907e2464a6599b81011fa188fac7dbac0ac5183762f2f1d44f044ee773",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+            "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+            "installationMechanism": "installed named profile and session-bound hook receipt",
+            "passingPolicyReceipts": 13
+          }
+        },
+        {
+          "kind": "preview",
+          "caseId": "report-unavailable-preview",
+          "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "archiveDigest": "sha256:2d5534941c7b3ff73904f03dce6933cc88309a6f1b1f7c071d87b4ab1f363788",
+          "assertions": [
+            {
+              "criterionId": "report-preview-gap",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "installedContext": {
+            "admissionDigest": "sha256:0bd3b9907e2464a6599b81011fa188fac7dbac0ac5183762f2f1d44f044ee773",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+            "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+            "installationMechanism": "installed named profile and session-bound hook receipt",
+            "passingPolicyReceipts": 5
+          }
+        },
+        {
+          "kind": "delegation",
+          "caseId": "preserve-delegated-requirements",
+          "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "archiveDigest": "sha256:3db2f9fb0d826fa1f4222632b9f092853739c9225c91c59d9f98f61a69021f0d",
+          "assertions": [
+            {
+              "criterionId": "verify-delegated-result",
+              "required": true,
+              "kind": "deterministic",
+              "outcome": {
+                "status": "passed"
+              }
+            }
+          ],
+          "nativeCheckReceipts": [
+            {
+              "exitCode": 0,
+              "tests": [
+                {
+                  "id": "subscription displays the confirmed label",
+                  "status": "passed"
+                }
+              ],
+              "source": "sha256:74b4dab43cc28c2881146180ffeab38c7a3f6bb9f374029fadaf3f58f8a642c2",
+              "report": "sha256:aabea0ab454cc97ccaf2ca0e49ea4ede8934af70e75383d065c102c573b264c0"
+            }
+          ],
+          "workerDurationMs": 12540,
+          "installedContext": {
+            "admissionDigest": "sha256:8ec4609f5935074f40ba05f467400e1912ea025f82fdc33331da111667236332",
+            "observedModel": "gpt-6-luna",
+            "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+            "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+            "installationMechanism": "installed named profile and session-bound hook receipt",
+            "passingPolicyReceipts": 19
+          }
+        }
+      ],
+      "nativeLifecycle": {
+        "kind": "installed-native-loopback",
+        "source": {
+          "revision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+          "digest": "sha256:73bace3cbc86365c688cb895ad666f1465d007111b4c6ccd724f26143e521bb9"
+        },
+        "host": {
+          "agent": "hermes",
+          "version": "0.23.3",
+          "model": "fixture-model",
+          "surface": "cli",
+          "os": "linux"
+        },
+        "bundleDigest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+        "updatedBundleDigest": "sha256:73a0dfc303e9bd1a1ac954d330eba34a27e36289289a1105a711979e1ab150ab",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+          "profiles": []
+        },
+        "updatedPolicy": {
+          "version": "1",
+          "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+          "profiles": []
+        },
+        "mechanism": "native plugin registration and session-bound llm_request middleware",
+        "brokenControl": {
+          "status": "failed",
+          "reason": "Required check hermes-bundle-integrity is failed: Hermes bundle content differs at core/AXIOMS.md."
+        },
+        "checks": {
+          "installation": {
+            "status": "passed"
+          },
+          "ordinarySession": {
+            "status": "passed"
+          },
+          "skillDiscovery": {
+            "status": "passed"
+          },
+          "update": {
+            "status": "passed"
+          },
+          "disabledControl": {
+            "status": "passed"
+          },
+          "uninstall": {
+            "status": "passed"
+          },
+          "settingsPreservation": {
+            "status": "passed"
+          },
+          "skillUse": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "reuse": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "clarification": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "verificationReporting": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "profileBehavior": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          },
+          "independentBenchmarks": {
+            "status": "not_run",
+            "reason": "An authorized real-model run and independent grading were not available."
+          }
+        },
+        "transport": {
+          "status": "passed"
+        },
+        "receiptDigest": "sha256:5f94941ca78bf717169e87e772313f9eec799897e14aac275d07daab8ad47f03"
+      },
+      "osVersion": "Ubuntu 26.04.1"
+    }
+  ]
+}

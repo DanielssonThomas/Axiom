@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+  "os": "linux",
+  "architecture": "x86_64",
+  "previousSourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+  "previousVersion": "0.0.9",
+  "hosts": [
+    {
+      "agent": "codex",
+      "version": "0.172.0-alpha.2",
+      "before": {
+        "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+        "version": "0.0.9",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:1a861a916af0fdf36a6f6a6b12d120c3bbb3eea4e49043449e3a311f7e65a3ed",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:d3e45d7ab2dbe84a74bec839d6d61f5f61df2fbefeb37c07391290ff6f9f1d77",
+          "profiles": [
+            {
+              "id": "ui-atomic",
+              "version": "1"
+            }
+          ]
+        },
+        "settingsDigest": "sha256:fc3921720491fa42d4a942d3a149397a0ac3928790515a98984409da8a9f1950"
+      },
+      "updated": {
+        "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+        "version": "0.1.0",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:454d0249978ef3390f5608a2c7d674dc6582341bab004efdd33c702344c2ad16",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+          "profiles": []
+        },
+        "settingsDigest": "sha256:fc3921720491fa42d4a942d3a149397a0ac3928790515a98984409da8a9f1950"
+      },
+      "restored": {
+        "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+        "version": "0.0.9",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:1a861a916af0fdf36a6f6a6b12d120c3bbb3eea4e49043449e3a311f7e65a3ed",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:d3e45d7ab2dbe84a74bec839d6d61f5f61df2fbefeb37c07391290ff6f9f1d77",
+          "profiles": [
+            {
+              "id": "ui-atomic",
+              "version": "1"
+            }
+          ]
+        },
+        "settingsDigest": "sha256:fc3921720491fa42d4a942d3a149397a0ac3928790515a98984409da8a9f1950"
+      }
+    },
+    {
+      "agent": "hermes",
+      "version": "0.23.3",
+      "before": {
+        "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+        "version": "0.0.9",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:464757369384b693df76c9eb7df7986d9b6963497ebece960de6a7e752a34cfb",
+        "commit": "c3aa4cb4757899d1d2adf21961e99d270f7fe437",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:d3e45d7ab2dbe84a74bec839d6d61f5f61df2fbefeb37c07391290ff6f9f1d77",
+          "profiles": [
+            {
+              "id": "ui-atomic",
+              "version": "1"
+            }
+          ]
+        },
+        "settingsDigest": "sha256:f7fc8cd934b55ad67585eb0596f3b63d4be39d298e7f049008995a1a45e855b1"
+      },
+      "updated": {
+        "sourceRevision": "ef35e6f5fb881db878a9547f124f8c28a08b414e",
+        "version": "0.1.0",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:59724db639fe977f032157fbaa3ee45b883a18bc152b6d0bc5e3b7ab9a337c9d",
+        "commit": "d13c176a257ec5c9589742f8401e9df8640053c1",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:2e968204a73b3d6384af8ff0687c8126c3ef798725f4d566ccbf655151ebcc78",
+          "profiles": []
+        },
+        "settingsDigest": "sha256:f7fc8cd934b55ad67585eb0596f3b63d4be39d298e7f049008995a1a45e855b1"
+      },
+      "restored": {
+        "sourceRevision": "d3b94ab3d44e91401063c9c2ddad96aaad0f5558",
+        "version": "0.0.9",
+        "outcome": {
+          "status": "passed"
+        },
+        "digest": "sha256:464757369384b693df76c9eb7df7986d9b6963497ebece960de6a7e752a34cfb",
+        "commit": "c3aa4cb4757899d1d2adf21961e99d270f7fe437",
+        "policy": {
+          "version": "1",
+          "digest": "sha256:d3e45d7ab2dbe84a74bec839d6d61f5f61df2fbefeb37c07391290ff6f9f1d77",
+          "profiles": [
+            {
+              "id": "ui-atomic",
+              "version": "1"
+            }
+          ]
+        },
+        "settingsDigest": "sha256:f7fc8cd934b55ad67585eb0596f3b63d4be39d298e7f049008995a1a45e855b1"
+      }
+    }
+  ]
+}
